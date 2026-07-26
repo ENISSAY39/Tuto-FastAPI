@@ -289,10 +289,95 @@ python -m pytest
 ```
 
 `pytest.ini` enables branch coverage for the application code and enforces a
-minimum of 90%. The terminal report lists uncovered lines. GitHub
+minimum of 95%. The terminal report lists uncovered lines. GitHub
 Actions runs the same command for every push and pull request, after checking
 that the application imports and that Alembic can build a schema matching the
 SQLModel metadata on an isolated SQLite database.
+
+## AI-assisted development with Aider
+
+This repository ships an [Aider](https://aider.chat) configuration wired to
+**local** models served by [Ollama](https://ollama.com). Nothing is sent to a
+third-party API, and no API key is required. This setup is entirely optional:
+it does not affect the application, the tests, or the Docker build.
+
+### Prerequisites
+
+Install Ollama and Aider, then pull the models. Ollama stores them wherever
+`OLLAMA_MODELS` points (a `blobs/` directory holding the weights and a
+`manifests/` directory indexing them); leave the variable unset to use the
+default location.
+
+```powershell
+python -m pip install aider-install
+aider-install
+
+ollama pull qwen2.5-coder:14b
+ollama pull qwen2.5-coder:32b
+ollama pull deepseek-coder-v2:16b
+```
+
+Check that the local server is answering before starting Aider:
+
+```powershell
+ollama list
+```
+
+### Tracked configuration
+
+| File | Role |
+|---|---|
+| `.aider.conf.yml` | Default model, aliases, auto-commit behaviour, and the `AGENTS.md` file loaded read-only at every start |
+| `.aider.model.settings.yml` | Per-model context window |
+
+Aider talks to Ollama over HTTP (`OLLAMA_API_BASE`, set by the configuration to
+`http://127.0.0.1:11434`). It never reads the model files on disk, so models are
+identified by name with an `ollama_chat/` prefix — exactly the names shown by
+`ollama list`.
+
+### Starting a session and switching models
+
+```powershell
+aider                    # starts on the default model
+aider routers/auth.py    # starts with a file already in the chat
+```
+
+Aliases are defined so models can be switched mid-session:
+
+| Alias | Model | Size |
+|---|---|---|
+| `ds16` | `deepseek-coder-v2:16b` | 8.9 GB |
+| `q14` | `qwen2.5-coder:14b` | 9.0 GB |
+| `q32` | `qwen2.5-coder:32b` | 19.9 GB |
+
+```text
+/model q32        switch model
+/add <file>       add a file to the chat
+/read-only <file> add a file as context Aider must not edit
+/drop <file>      remove a file from the chat
+/tokens           show what the current context costs
+/undo             revert Aider's last automatic commit
+```
+
+Note that `/models <query>` searches the LiteLLM catalogue of remote providers,
+so it will never list your local models. Use the aliases above instead.
+
+### Two settings worth knowing
+
+**Context window.** Ollama defaults to 2048 tokens, which silently truncates the
+repository map and the files submitted for editing. `.aider.model.settings.yml`
+raises `num_ctx` to 8192. Larger values consume more VRAM on top of the weights.
+
+**Model choice depends on your GPU.** `deepseek-coder-v2:16b` is a
+mixture-of-experts model: 16 B parameters in total but only about 2.4 B active
+per token, so it stays responsive even when it does not fit entirely in VRAM.
+The dense `qwen2.5-coder` models are slower once they overflow. On an 8 GB card
+the 16 B model is the practical default and the 32 B one is best reserved for
+occasional questions rather than editing loops.
+
+Aider commits accepted changes automatically (`auto-commits: true`). Review its
+diffs like any other contribution: the project rules in `AGENTS.md` — ownership
+checks, CSRF validation, Alembic migrations — still apply.
 
 ## Dependencies
 
