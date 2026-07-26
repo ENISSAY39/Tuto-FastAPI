@@ -119,6 +119,37 @@ configuration.
 - Use UTF-8 and preserve existing French and English copy. Avoid unrelated text,
   naming, or formatting rewrites.
 
+## TDD workflow (qwen3-coder:30b / qwen2.5-coder:32b)
+
+When asked to add or change behavior, follow a strict Red-Green-Refactor
+cycle instead of writing implementation and tests together. This needs a
+capable model to hold the discipline across steps — use it with
+`qwen3-coder:30b` or `qwen2.5-coder:32b`; do not expect the same rigor from
+`qwen2.5-coder:14b`/`7b` or `deepseek-coder-v2:16b`.
+
+**RED** — write exactly one new failing test in `tests/`, matching the
+existing arrange/act/assert shape already used in this suite (build fixtures
+and request data, call the route via `client`, then assert on the response).
+Run `python -m pytest tests/<file>.py -k <test name>` and confirm it fails
+for the right reason — the assertion, not an import error, a fixture
+mistake, or a typo in the route path. Do not write any implementation code
+in this step.
+
+**GREEN** — write the minimal code needed to make that one test pass. Do not
+add extra routes, fields, validation, or error handling beyond what the
+failing test requires, and do not refactor existing code in this step. Run
+`python -m pytest` and confirm the new test passes and no other test broke.
+
+**REFACTOR** — only once every test is green, improve naming, extract shared
+helpers, or remove duplication in the files you touched. Do not add new
+behavior here. Re-run `python -m pytest` after each refactor step and stop
+immediately if a previously passing test breaks.
+
+Keep each cycle scoped to one behavior — one route, one validation rule, one
+bug fix. Never mention "TDD", "red phase", or similar meta-commentary in
+code, comments, or commit messages; the result should read the same as the
+rest of this codebase.
+
 ## Authentication and data-ownership rules
 
 - Protected routes read the `access_token` HTTP-only cookie, decode it, use the
@@ -163,18 +194,17 @@ configuration.
 
 ## Verification
 
-The repository has an automated pytest suite with line and branch coverage.
-`pytest.ini` enforces a minimum total coverage of 95%, and GitHub Actions runs
-the suite on every push and pull request:
+The repository has a smoke-level pytest suite: one nominal case and one
+"not authorized" case per route, plus a startup check. `pytest.ini` reports
+line and branch coverage for visibility but does not fail the run below a
+threshold. GitHub Actions runs the suite on every push and pull request:
 
 ```powershell
 python -m pytest
 ```
 
-Use `--no-cov` only for a quick targeted test while developing; finish with the
-complete command above so the configured coverage threshold is verified. Also
-verify that the application and all registered routers import after backend or
-startup changes. The `-B` flag avoids writing bytecode:
+Also verify that the application and all registered routers import after
+backend or startup changes. The `-B` flag avoids writing bytecode:
 
 ```powershell
 python -B -c "from main import app; print(app.title)"

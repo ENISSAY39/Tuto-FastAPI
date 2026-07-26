@@ -236,3 +236,4 @@ cache.*
 *.txt
 *.jpgeg
 *.pnj
+.aider*
