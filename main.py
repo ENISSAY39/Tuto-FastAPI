@@ -65,6 +65,13 @@ async def csrf_cookie_middleware(request: Request, call_next):
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Register the public/authentication, profile, experience, and education routes.
+# Add health check endpoint
+@app.get("/health")
+def health_check():
+    """Return a simple health check status."""
+    return {"status": "ok"}
+
+
 app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(experience.router)
