@@ -9,10 +9,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from core.config import settings
 from core.csrf import get_or_create_csrf_token, set_csrf_cookie
-from core.database import run_database_migrations
+from core.database import SessionDep, run_database_migrations
 from routers import auth, user, experience, education
 from seed import seed
 
@@ -64,14 +65,16 @@ async def csrf_cookie_middleware(request: Request, call_next):
 # Expose stylesheets and other public assets under a stable URL prefix.
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Register the public/authentication, profile, experience, and education routes.
-# Add health check endpoint
+# Le healthcheck sert aux sondes externes (Docker, supervision) : il ne se
+# contente pas de répondre, il vérifie que la base répond elle aussi.
 @app.get("/health")
-def health_check():
-    """Return a simple health check status."""
-    return {"status": "ok"}
+def health_check(session: SessionDep):
+    """Signale que l'application et sa base de données répondent."""
+    session.execute(text("SELECT 1"))
+    return {"status": "ok", "database": "ok"}
 
 
+# Register the public/authentication, profile, experience, and education routes.
 app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(experience.router)

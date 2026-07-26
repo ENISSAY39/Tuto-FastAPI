@@ -3,15 +3,8 @@
 from fastapi.testclient import TestClient
 
 
-def test_health_check(client: TestClient) -> None:
-    """Test that the /health endpoint returns a 200 status with correct JSON."""
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
-
-
-def test_health_check_database_ok(client: TestClient) -> None:
-    """Test that the /health endpoint returns a 200 status with database info."""
+def test_health_check_reports_application_and_database(client: TestClient) -> None:
+    """The endpoint answers 200 and confirms the database responded too."""
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "database": "ok"}
