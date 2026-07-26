@@ -1,16 +1,42 @@
-# Ollama limite le contexte à 2048 tokens par défaut, ce qui tronque
-# silencieusement le repo-map et les fichiers envoyés par Aider.
-# num_ctx consomme de la VRAM en plus des poids : 8192 est un compromis
-# adapté aux 8 Go de la RTX 4060 Laptop.
+# Fenêtre de contexte par modèle.
+#
+# Aider envoie num_ctx dans chaque requête HTTP, et cette valeur est PRIORITAIRE
+# sur la variable serveur OLLAMA_CONTEXT_LENGTH : c'est donc ce fichier qui
+# décide réellement, pas l'environnement d'Ollama.
+#
+# Le cache KV occupe de la mémoire EN PLUS des poids et croît linéairement avec
+# num_ctx. Les valeurs ci-dessous tiennent dans 8 Go de VRAM + 32 Go de RAM
+# (RTX 4060 Laptop) avec OLLAMA_KV_CACHE_TYPE=q8_0, qui divise ce coût par deux.
+# Les modèles denses reçoivent une fenêtre plus petite : leurs poids saturent
+# déjà la mémoire, donc chaque Go de cache en plus se paie en lenteur.
+
+# MoE (~3 B actifs) : supporte une grande fenêtre sans s'effondrer.
+# Mesuré avec `ollama ps` : à 65536 le cache KV mangeait ~3,1 Go des 6,9 Go de
+# VRAM utile, ne laissant que 28 % du modèle sur le GPU. 32768 rend ~1,5 Go aux
+# poids et suffit largement au repo-map plus quelques fichiers.
+- name: ollama_chat/qwen3-coder:30b
+  extra_params:
+    num_ctx: 32768
 
 - name: ollama_chat/deepseek-coder-v2:16b
   extra_params:
-    num_ctx: 8192
+    num_ctx: 32768
 
+- name: ollama_chat/gpt-oss:20b
+  extra_params:
+    num_ctx: 32768
+
+# Denses : 32768 est la fenêtre native de qwen2.5-coder, ne pas la dépasser.
 - name: ollama_chat/qwen2.5-coder:14b
   extra_params:
-    num_ctx: 8192
+    num_ctx: 32768
 
+# 19 Go de poids : on réduit la fenêtre pour éviter le swap.
 - name: ollama_chat/qwen2.5-coder:32b
+  extra_params:
+    num_ctx: 16384
+
+# weak-model (messages de commit) : 8192 suffit et le garde entier en VRAM.
+- name: ollama_chat/qwen2.5-coder:7b
   extra_params:
     num_ctx: 8192

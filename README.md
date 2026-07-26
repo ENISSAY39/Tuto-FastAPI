@@ -312,8 +312,8 @@ default location.
 python -m pip install aider-install
 aider-install
 
-ollama pull qwen2.5-coder:14b
-ollama pull qwen2.5-coder:32b
+ollama pull qwen3-coder:30b      # default model
+ollama pull qwen2.5-coder:7b     # weak-model, commit messages
 ollama pull deepseek-coder-v2:16b
 ```
 
@@ -322,6 +322,59 @@ Check that the local server is answering before starting Aider:
 ```powershell
 ollama list
 ```
+
+### Server environment variables
+
+These are read by the **Ollama server**, not by Aider. On Windows the desktop
+app reads them at launch, so set them at user scope and restart Ollama:
+
+```powershell
+# 1. Persist them for future sessions (writes to the registry).
+[Environment]::SetEnvironmentVariable('OLLAMA_MODELS','D:\llms','User')
+[Environment]::SetEnvironmentVariable('OLLAMA_FLASH_ATTENTION','1','User')
+[Environment]::SetEnvironmentVariable('OLLAMA_KV_CACHE_TYPE','q8_0','User')
+[Environment]::SetEnvironmentVariable('OLLAMA_CONTEXT_LENGTH','65536','User')
+
+# 2. Also set them in THIS shell — see the trap below.
+$env:OLLAMA_FLASH_ATTENTION = '1'
+$env:OLLAMA_KV_CACHE_TYPE   = 'q8_0'
+$env:OLLAMA_CONTEXT_LENGTH  = '65536'
+
+# 3. Restart the server so it reads them.
+Get-Process 'ollama app','ollama' -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process "$env:LOCALAPPDATA\Programs\Ollama\ollama app.exe"
+```
+
+> **Trap: step 2 is not redundant.** `SetEnvironmentVariable(..., 'User')` writes
+> to the registry but does **not** refresh the environment block of processes
+> that are already running — including the shell you are typing in. Restarting
+> Ollama from that shell hands it a stale environment, and it starts with the
+> variables unset while the registry says otherwise. Either set them in the
+> current session as above, or log out and back in before restarting Ollama.
+
+**Always verify rather than assume.** The server logs its entire configuration
+at startup, which is the only trustworthy confirmation:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\Ollama\server.log" |
+  Select-String 'server config' | Select-Object -Last 1
+```
+
+Expect `OLLAMA_CONTEXT_LENGTH:65536`, `OLLAMA_FLASH_ATTENTION:true` and
+`OLLAMA_KV_CACHE_TYPE:q8_0`. A `CONTEXT_LENGTH:0`, `FLASH_ATTENTION:false` or an
+empty `KV_CACHE_TYPE` means the restart did not pick them up — the models still
+load and answer normally, so nothing warns you that the tuning is inactive.
+
+| Variable | Role |
+|---|---|
+| `OLLAMA_MODELS` | Where weights are stored. Point it at a data drive — the models are tens of GB |
+| `OLLAMA_FLASH_ATTENTION` | Required for `OLLAMA_KV_CACHE_TYPE` to take effect; ignored silently without it |
+| `OLLAMA_KV_CACHE_TYPE` | `q8_0` halves the memory the context cache needs, for a negligible quality cost |
+| `OLLAMA_CONTEXT_LENGTH` | Server-side default window. **Aider overrides it** — see below |
+| `OLLAMA_KEEP_ALIVE` | How long an idle model stays in memory (default `5m`) |
+
+The `set-env:` block in `.aider.conf.yml` only sets `OLLAMA_API_BASE` for the
+Aider **client**; it cannot configure the server.
 
 ### Tracked configuration
 
@@ -344,11 +397,13 @@ aider routers/auth.py    # starts with a file already in the chat
 
 Aliases are defined so models can be switched mid-session:
 
-| Alias | Model | Size |
-|---|---|---|
-| `ds16` | `deepseek-coder-v2:16b` | 8.9 GB |
-| `q14` | `qwen2.5-coder:14b` | 9.0 GB |
-| `q32` | `qwen2.5-coder:32b` | 19.9 GB |
+| Alias | Model | Size | Architecture |
+|---|---|---|---|
+| `q3c` | `qwen3-coder:30b` | 17.3 GB | MoE, ~3.3 B active |
+| `ds16` | `deepseek-coder-v2:16b` | 8.9 GB | MoE, ~2.4 B active |
+| `oss` | `gpt-oss:20b` | 12.8 GB | MoE, ~3.6 B active |
+| `q14` | `qwen2.5-coder:14b` | 9.0 GB | dense |
+| `q32` | `qwen2.5-coder:32b` | 19.9 GB | dense |
 
 ```text
 /model q32        switch model
@@ -362,18 +417,137 @@ Aliases are defined so models can be switched mid-session:
 Note that `/models <query>` searches the LiteLLM catalogue of remote providers,
 so it will never list your local models. Use the aliases above instead.
 
-### Two settings worth knowing
+### Limits of running LLMs locally
 
-**Context window.** Ollama defaults to 2048 tokens, which silently truncates the
-repository map and the files submitted for editing. `.aider.model.settings.yml`
-raises `num_ctx` to 8192. Larger values consume more VRAM on top of the weights.
+The reference machine for this configuration is a **Dell G15 5530: RTX 4060
+Laptop with 8 GB of VRAM, 32 GB of system RAM**. Every value below is derived
+from that budget — recompute them if your hardware differs.
 
-**Model choice depends on your GPU.** `deepseek-coder-v2:16b` is a
-mixture-of-experts model: 16 B parameters in total but only about 2.4 B active
-per token, so it stays responsive even when it does not fit entirely in VRAM.
-The dense `qwen2.5-coder` models are slower once they overflow. On an 8 GB card
-the 16 B model is the practical default and the 32 B one is best reserved for
-occasional questions rather than editing loops.
+**Active parameters matter more than model size.** What a GPU must move for each
+generated token is the *active* parameters, not the total. A mixture-of-experts
+model such as `qwen3-coder:30b` holds 30 B weights but activates only ~3.3 B per
+token, so it stays usable even when two thirds of it sits in system RAM. A dense
+model activates everything: once `qwen2.5-coder:32b` overflows 8 GB of VRAM,
+every token drags 19 GB across the PCIe bus. This is why a 30 B MoE model is the
+practical default here while a 32 B dense one is reserved for occasional
+questions rather than editing loops.
+
+**The context window is not free.** Ollama 0.32 defaults to 4096 tokens, which
+silently truncates the repository map and the files submitted for editing. But
+raising it allocates a *KV cache* that grows linearly with the window and sits
+in memory **on top of the weights**. For `qwen3-coder:30b` (48 layers, 4 KV
+heads, head_dim 128) one token costs ~96 KB in f16:
+
+| Window | KV cache f16 | KV cache q8_0 | Total with 17.3 GB of weights |
+|---|---|---|---|
+| 32K | 3.1 GB | 1.6 GB | 18.9 GB |
+| 64K | 6.3 GB | **3.1 GB** | **20.4 GB** |
+| 128K | 12.6 GB | 6.3 GB | 23.6 GB |
+| 256K | 25.2 GB | 12.6 GB | 29.9 GB — will not load |
+
+Advertising a 256K context does not mean your hardware can hold it.
+
+That table only counts *total* memory, though, and fitting is not the goal —
+staying on the GPU is. Both windows were measured on the reference machine:
+
+| `num_ctx` | Footprint | CPU/GPU split | Free system RAM |
+|---|---|---|---|
+| 65536 | 22 GB | 72% / 28% | 3.3 GB |
+| **32768** | **20 GB** | **69% / 31%** | **6.2 GB** |
+
+Generation runs at **~15.6 tok/s** either way. The lesson is that shrinking the
+window buys far less GPU residency than the arithmetic suggests: 18 GB of
+weights will never fit in 6.9 GB of usable VRAM whatever the context, so the
+split is dominated by model size, not by the KV cache. Going below 32K would
+gain almost nothing.
+
+The real payoff is elsewhere — free system RAM nearly doubles, which is what
+keeps the machine off the page file when a browser or an editor asks for memory
+mid-generation. That is the reason to prefer 32768 here, not the GPU split.
+
+If you genuinely want a mostly-GPU-resident model, the only lever is a smaller
+one: `deepseek-coder-v2:16b` (8.9 GB) fits far better, at a cost in quality.
+`OLLAMA_CONTEXT_LENGTH` stays at 65536 as a server-side ceiling, but the
+per-model value is what actually runs.
+
+**First load takes time.** Reading 18 GB from disk costs ~100 s; afterwards the
+model stays resident for `OLLAMA_KEEP_ALIVE` (5 minutes). Raise that variable to
+`30m` if reloads become annoying — at the cost of holding the memory that long.
+
+**Precedence trap.** Aider sends `num_ctx` in every HTTP request, and a
+per-request option always wins over the server default. `OLLAMA_CONTEXT_LENGTH`
+therefore applies only to models **absent** from `.aider.model.settings.yml`.
+Add an entry there for every model you intend to use, or it will quietly run at
+the server default.
+
+**Measure, do not trust the table.** The figures above are arithmetic, not a
+benchmark of your machine. Start a session, then in a second terminal:
+
+```powershell
+ollama ps    # qwen3-coder:30b   20 GB   69%/31% CPU/GPU   32768
+```
+
+Read the split together with free system RAM, not on its own: a high CPU share
+is expected here and still yields usable speed, whereas an exhausted RAM budget
+means swapping and does not. Confirm the CUDA device is the one being used —
+Ollama excludes integrated GPUs by default, and the startup log says so
+explicitly:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\Ollama\server.log" |
+  Select-String 'inference compute|dropping integrated GPU' | Select-Object -Last 2
+```
+
+On the reference machine that reports `library=CUDA … RTX 4060 Laptop GPU` and
+`dropping integrated GPU` for the Intel controller — the discrete card is doing
+the work.
+
+### Disk usage: what to clean, and where
+
+Two different things get called "cache". Only one of them ever touches the disk.
+
+**The KV cache never does.** It lives in VRAM and RAM, is rebuilt for each
+loaded model, and is released when Ollama unloads it after `OLLAMA_KEEP_ALIVE`
+(5 minutes idle by default). There is nothing to delete and no maintenance to
+schedule — restarting Ollama, or simply waiting, frees it. To release it now:
+
+```powershell
+ollama ps                 # models currently resident in memory
+ollama stop qwen3-coder:30b
+```
+
+**The weights do, and they are the only large item.** They live under
+`OLLAMA_MODELS` — `D:\llms` here, not on `C:` — and grow **only** when you run
+`ollama pull`. They never grow on their own, so no periodic cleanup is needed;
+you delete a model when you have stopped using it:
+
+```powershell
+Get-ChildItem D:\llms\blobs -File | Measure-Object Length -Sum   # actual footprint
+ollama rm qwen2.5-coder:32b                                      # frees its blobs
+```
+
+Always use `ollama rm`. Deleting files inside `blobs/` by hand leaves the
+manifests pointing at missing layers, and the model then fails to load with no
+way to repair it short of re-pulling. Note that blobs are shared: a layer used
+by two models is only reclaimed once the last of them is removed, so `ollama rm`
+does not always free the size shown by `ollama list`.
+
+**What remains on `C:` is negligible** and needs no upkeep:
+
+| Path | Contents | Growth |
+|---|---|---|
+| `%LOCALAPPDATA%\Programs\Ollama` | The Ollama binaries | Fixed; the installer manages it |
+| `%LOCALAPPDATA%\Ollama` | `server.log`, `app.log`, `db.sqlite` | Under a MB, rotated automatically |
+| `%USERPROFILE%\.ollama` | SSH keypair identifying the machine to the registry, plus an empty `cache/` | Effectively zero — do not delete the keys |
+
+**Aider's own caches live in the repository**, are covered by `.gitignore`, and
+stay small (~130 KB). Delete them only if the repository map looks stale after a
+large refactor — Aider rebuilds them on the next run:
+
+```powershell
+Remove-Item .aider.tags.cache.v4 -Recurse -Force
+Remove-Item .aider.chat.history.md, .aider.input.history -Force
+```
 
 Aider commits accepted changes automatically (`auto-commits: true`). Review its
 diffs like any other contribution: the project rules in `AGENTS.md` — ownership

@@ -1,16 +1,23 @@
 # Modèle par défaut au lancement d'Aider.
 # Le préfixe ollama_chat/ indique le fournisseur : Aider dialogue avec le serveur
 # Ollama en HTTP, il ne lit jamais les fichiers de D:\llms directement.
-model: ollama_chat/deepseek-coder-v2:16b
+model: ollama_chat/qwen3-coder:30b
 
 # Raccourcis utilisables avec /model en cours de session (ex: /model q14).
+# Les modèles MoE (qwen3-coder, deepseek-coder-v2) n'activent que 3 B de
+# paramètres par token : ils débordent en RAM sans s'effondrer en vitesse.
+# Les modèles denses (qwen2.5-coder) sollicitent tous leurs poids, donc au-delà
+# de la VRAM disponible ils deviennent nettement plus lents.
 alias:
+  - "q3c:ollama_chat/qwen3-coder:30b"
   - "ds16:ollama_chat/deepseek-coder-v2:16b"
+  - "oss:ollama_chat/gpt-oss:20b"
   - "q14:ollama_chat/qwen2.5-coder:14b"
   - "q32:ollama_chat/qwen2.5-coder:32b"
 
 # Modèle léger réservé aux messages de commit et aux résumés d'historique.
-weak-model: ollama_chat/deepseek-coder-v2:16b
+# 4,4 Go : tient entièrement en VRAM, donc réponse immédiate sur ces tâches.
+weak-model: ollama_chat/qwen2.5-coder:7b
 
 # Adresse du serveur Ollama local, définie ici pour ne pas dépendre des
 # variables d'environnement du terminal courant.
