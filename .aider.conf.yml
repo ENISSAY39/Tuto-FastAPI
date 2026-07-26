@@ -1,0 +1,32 @@
+# Modèle par défaut au lancement d'Aider.
+# Le préfixe ollama_chat/ indique le fournisseur : Aider dialogue avec le serveur
+# Ollama en HTTP, il ne lit jamais les fichiers de D:\llms directement.
+model: ollama_chat/deepseek-coder-v2:16b
+
+# Raccourcis utilisables avec /model en cours de session (ex: /model q14).
+alias:
+  - "ds16:ollama_chat/deepseek-coder-v2:16b"
+  - "q14:ollama_chat/qwen2.5-coder:14b"
+  - "q32:ollama_chat/qwen2.5-coder:32b"
+
+# Modèle léger réservé aux messages de commit et aux résumés d'historique.
+weak-model: ollama_chat/deepseek-coder-v2:16b
+
+# Adresse du serveur Ollama local, définie ici pour ne pas dépendre des
+# variables d'environnement du terminal courant.
+set-env:
+  - OLLAMA_API_BASE=http://127.0.0.1:11434
+
+# Style visuel du terminal
+dark-mode: true
+
+# Valide et commit automatiquement chaque modification acceptée dans Git
+auto-commits: true
+
+# Désactive les signatures "Authored by Aider" dans les commits Git
+attribute-author: false
+attribute-committer: false
+
+# Consignes projet chargées en lecture seule à chaque démarrage
+read:
+  - AGENTS.md

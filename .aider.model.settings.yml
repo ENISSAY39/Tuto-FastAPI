@@ -1,0 +1,16 @@
+# Ollama limite le contexte à 2048 tokens par défaut, ce qui tronque
+# silencieusement le repo-map et les fichiers envoyés par Aider.
+# num_ctx consomme de la VRAM en plus des poids : 8192 est un compromis
+# adapté aux 8 Go de la RTX 4060 Laptop.
+
+- name: ollama_chat/deepseek-coder-v2:16b
+  extra_params:
+    num_ctx: 8192
+
+- name: ollama_chat/qwen2.5-coder:14b
+  extra_params:
+    num_ctx: 8192
+
+- name: ollama_chat/qwen2.5-coder:32b
+  extra_params:
+    num_ctx: 8192

@@ -218,3 +218,7 @@ __marimo__/
 database.db
 
 /database 
+
+CLAUDE.md
+
+*.db
