@@ -5,11 +5,19 @@
 # Modèle par défaut au lancement d'Aider (modifs simples)
 model: ollama/qwen2.5-coder:14b
 
+edit-format: diff
+
 # Modèle léger utilisé pour les messages de commit et résumés d'historique
 weak-model: ollama/qwen2.5-coder:7b
 
 # Surveille les fichiers ouverts et applique les modifs via des commentaires "# ai:"
 watch-files: true
+
+# Adresse du serveur Ollama local (évite le warning OLLAMA_API_BASE au démarrage)
+set-env:
+  - OLLAMA_API_BASE=http://127.0.0.1:11434
+
+model-settings-file: C:\Users\DELL_G15_5330\.aider.model.settings.yml
 
 # Style visuel du terminal
 dark-mode: true

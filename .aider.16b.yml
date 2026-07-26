@@ -1,9 +1,16 @@
 # Exemple — profil "modifs simples", alternative (deepseek)
 model: ollama/deepseek-coder-v2:16b
 
+edit-format: diff
+
 weak-model: ollama/qwen2.5-coder:7b
 
 watch-files: true
+
+set-env:
+  - OLLAMA_API_BASE=http://127.0.0.1:11434
+
+model-settings-file: C:\Users\DELL_G15_5330\.aider.model.settings.yml
 
 dark-mode: true
 auto-commits: true
