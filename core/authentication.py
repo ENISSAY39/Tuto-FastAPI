@@ -23,3 +23,11 @@ def get_authenticated_user(request: Request, session: Session) -> User | None:
     if not isinstance(mail, str):
         return None
     return session.exec(select(User).where(User.mail == mail)).first()
+
+
+def load_owned_record(session: Session, model, record_id: int, user) -> object | None:
+    """Return the record when it exists and belongs to user, otherwise None."""
+    record = session.get(model, record_id)
+    if record and user and record.user_id == user.id:
+        return record
+    return None

@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
-from core.authentication import get_authenticated_user
+from core.authentication import get_authenticated_user, load_owned_record
 from core.csrf import validate_csrf_token
 from core.database import get_session
 from core.validation import clean_text, parse_date_range
@@ -124,11 +124,10 @@ def delete_education(
     # Le contrôle CSRF précède le chargement de la ressource destinée à être supprimée.
     validate_csrf_token(request, csrf_token)
 
-    # La clé primaire vient de l'URL, mais elle ne constitue jamais une preuve de propriété.
-    edu = session.get(Education, edu_id)
-
-    # Une ressource absente ou appartenant à un autre compte est laissée intacte.
-    if edu and user and edu.user_id == user.id:
+    # Utilisation du helper pour vérifier la propriété
+    edu = load_owned_record(session, Education, edu_id, user)
+    
+    if edu:
         session.delete(edu)
         session.commit()
 
@@ -149,11 +148,10 @@ def edit_education_form(
     if not user:
         return RedirectResponse("/login", status_code=303)
 
-    # L'objet demandé est chargé par sa clé primaire dans la session de la requête.
-    edu = session.get(Education, edu_id)
-
-    # Le contrôle d'ownership interdit l'affichage d'une formation appartenant à autrui.
-    if not edu or not user or edu.user_id != user.id:
+    # Utilisation du helper pour vérifier la propriété
+    edu = load_owned_record(session, Education, edu_id, user)
+    
+    if not edu:
         return RedirectResponse("/profil", status_code=303)
 
     # edu active le mode édition du template ; les valeurs persistées préremplissent les champs.
@@ -186,11 +184,10 @@ def update_education(
     # Le jeton CSRF protège la requête POST contre une soumission depuis un site tiers.
     validate_csrf_token(request, csrf_token)
 
-    # L'identifiant d'URL sert uniquement à charger la ressource candidate.
-    edu = session.get(Education, edu_id)
-
-    # La propriété est vérifiée avant même de valider ou d'appliquer les nouvelles valeurs.
-    if not edu or edu.user_id != user.id:
+    # Utilisation du helper pour vérifier la propriété
+    edu = load_owned_record(session, Education, edu_id, user)
+    
+    if not edu:
         return RedirectResponse("/profil", status_code=303)
 
     # La saisie d'origine permet de ne pas effacer les champs après une validation refusée.
