@@ -28,6 +28,7 @@ auto-commits: true
 # Désactive les signatures "Authored by Aider" dans les commits Git
 attribute-author: false
 attribute-committer: false
+attribute-co-authored-by: false
 
 # Fichiers de consignes à charger automatiquement en mémoire à chaque démarrage
 read:
