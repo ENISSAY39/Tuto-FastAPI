@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
 from core.authentication import get_authenticated_user, load_owned_record
+from core.auth_guard import auth_guard
 from core.csrf import validate_csrf_token
 from core.database import get_session
 from core.validation import clean_text, parse_date_range
@@ -25,11 +26,10 @@ def show_experience_form(
 ):
     """Affiche le formulaire vide de création d'une expérience authentifiée."""
 
-    # L'utilisateur est résolu depuis le cookie JWT avant d'exposer une page privée.
-    user = get_authenticated_user(request, session)
-    if not user:
-        # Tout échec d'authentification conserve le comportement de redirection vers la connexion.
-        return RedirectResponse("/login", status_code=303)
+    auth_result = auth_guard(request, session)
+    if isinstance(auth_result, RedirectResponse):
+        return auth_result
+    user = auth_result
 
     # exp=None place le template partagé en mode création et form_values initialise les champs.
     return templates.TemplateResponse(
@@ -52,10 +52,10 @@ def create_experience(
 ):
     """Valide et enregistre une expérience pour l'utilisateur authentifié."""
 
-    # Le propriétaire est toujours dérivé du JWT, jamais d'une valeur fournie par le formulaire.
-    user = get_authenticated_user(request, session)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
+    auth_result = auth_guard(request, session)
+    if isinstance(auth_result, RedirectResponse):
+        return auth_result
+    user = auth_result
 
     # La mutation n'est autorisée qu'avec le jeton CSRF associé au navigateur courant.
     validate_csrf_token(request, csrf_token)
@@ -116,10 +116,10 @@ def delete_experience(
 ):
     """Supprime une expérience uniquement si elle appartient au compte authentifié."""
 
-    # La suppression exige d'abord une identité valide issue du cookie d'accès.
-    user = get_authenticated_user(request, session)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
+    auth_result = auth_guard(request, session)
+    if isinstance(auth_result, RedirectResponse):
+        return auth_result
+    user = auth_result
 
     # Le contrôle CSRF précède le chargement de la ressource destinée à être supprimée.
     validate_csrf_token(request, csrf_token)
@@ -143,10 +143,10 @@ def edit_experience_form(
 ):
     """Affiche le formulaire d'édition d'une expérience possédée par le compte courant."""
 
-    # Le profil actif est résolu avant de charger une donnée privée.
-    user = get_authenticated_user(request, session)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
+    auth_result = auth_guard(request, session)
+    if isinstance(auth_result, RedirectResponse):
+        return auth_result
+    user = auth_result
 
     # Vérification que l'expérience appartient bien à l'utilisateur authentifié avant édition
     exp = load_owned_record(session, Experience, exp_id, user)
@@ -176,10 +176,10 @@ def update_experience(
 ):
     """Valide puis met à jour une expérience appartenant au compte authentifié."""
 
-    # L'identité chargée depuis le JWT est nécessaire avant toute modification.
-    user = get_authenticated_user(request, session)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
+    auth_result = auth_guard(request, session)
+    if isinstance(auth_result, RedirectResponse):
+        return auth_result
+    user = auth_result
 
     # Le jeton CSRF protège la requête POST contre une soumission depuis un site tiers.
     validate_csrf_token(request, csrf_token)
