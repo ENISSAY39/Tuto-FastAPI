@@ -294,38 +294,42 @@ Actions runs the same command for every push and pull request, after checking
 that the application imports and that Alembic can build a schema matching the
 SQLModel metadata on an isolated SQLite database.
 
-## AI-assisted development with Aider
+## AI-assisted development with local LLMs
 
-This repository ships an [Aider](https://aider.chat) configuration wired to
-**local** models served by [Ollama](https://ollama.com). Nothing is sent to a
-third-party API, and no API key is required. This setup is entirely optional:
-it does not affect the application, the tests, or the Docker build.
+This project is developed with [Cline](https://cline.bot) (a VS Code extension)
+driving **local** models served by [Ollama](https://ollama.com). Nothing is sent
+to a third-party API, and no API key is required. This setup is entirely
+optional: it does not affect the application, the tests, or the Docker build.
+
+> Earlier revisions of this README documented an [Aider](https://aider.chat)
+> setup. It was removed in favour of Cline — see
+> [Why Cline replaced Aider](#why-cline-replaced-aider) below.
 
 ### Prerequisites
 
-Install Ollama and Aider, then pull the models. Ollama stores them wherever
-`OLLAMA_MODELS` points (a `blobs/` directory holding the weights and a
-`manifests/` directory indexing them); leave the variable unset to use the
-default location.
+Install Ollama, install Cline from the VS Code marketplace, then pull the
+models. Ollama stores them wherever `OLLAMA_MODELS` points (a `blobs/` directory
+holding the weights and a `manifests/` directory indexing them); leave the
+variable unset to use the default location.
 
 ```powershell
-python -m pip install aider-install
-aider-install
-
-ollama pull qwen3-coder:30b      # default model
-ollama pull qwen2.5-coder:7b     # weak-model, commit messages
-ollama pull deepseek-coder-v2:16b
+ollama pull gpt-oss:20b          # heavy tasks: refactors, features, tests
+ollama pull qwen2.5-coder:7b     # commit messages, PR titles and descriptions
+ollama pull qwen3-coder:30b      # alternative for heavy tasks
 ```
 
-Check that the local server is answering before starting Aider:
+Check that the local server is answering before starting:
 
 ```powershell
 ollama list
 ```
 
+In Cline, select the **Ollama** provider and point it at
+`http://127.0.0.1:11434`; the model list is populated from `ollama list`.
+
 ### Server environment variables
 
-These are read by the **Ollama server**, not by Aider. On Windows the desktop
+These are read by the **Ollama server**, not by the client. On Windows the desktop
 app reads them at launch, so set them at user scope and restart Ollama:
 
 ```powershell
@@ -370,52 +374,67 @@ load and answer normally, so nothing warns you that the tuning is inactive.
 | `OLLAMA_MODELS` | Where weights are stored. Point it at a data drive — the models are tens of GB |
 | `OLLAMA_FLASH_ATTENTION` | Required for `OLLAMA_KV_CACHE_TYPE` to take effect; ignored silently without it |
 | `OLLAMA_KV_CACHE_TYPE` | `q8_0` halves the memory the context cache needs, for a negligible quality cost |
-| `OLLAMA_CONTEXT_LENGTH` | Server-side default window. **Aider overrides it** — see below |
+| `OLLAMA_CONTEXT_LENGTH` | Server-side default window. **A model's own `num_ctx` overrides it** — see below |
 | `OLLAMA_KEEP_ALIVE` | How long an idle model stays in memory (default `5m`) |
 
-The `set-env:` block in `.aider.conf.yml` only sets `OLLAMA_API_BASE` for the
-Aider **client**; it cannot configure the server.
+These variables configure the **server** only. A client cannot set them.
 
-### Tracked configuration
+### Model configuration: custom Modelfiles
 
-| File | Role |
-|---|---|
-| `.aider.conf.yml` | Default model, aliases, auto-commit behaviour, and the `AGENTS.md` file loaded read-only at every start |
-| `.aider.model.settings.yml` | Per-model context window |
+Cline sends no per-request `num_ctx`, so the context window has to be baked into
+the model itself. Without that, Ollama falls back to its own default and the
+window is either too small for the repository map or large enough to fail on
+`cudaMalloc failed: out of memory`. The fix is a derived model:
 
-Aider talks to Ollama over HTTP (`OLLAMA_API_BASE`, set by the configuration to
-`http://127.0.0.1:11434`). It never reads the model files on disk, so models are
-identified by name with an `ollama_chat/` prefix — exactly the names shown by
-`ollama list`.
-
-### Starting a session and switching models
+```dockerfile
+# gpt-oss-cline.Modelfile
+FROM gpt-oss:20b
+PARAMETER num_ctx 32768
+PARAMETER temperature 1
+```
 
 ```powershell
-aider                    # starts on the default model
-aider routers/auth.py    # starts with a file already in the chat
+ollama create gpt-oss-cline -f gpt-oss-cline.Modelfile
 ```
 
-Aliases are defined so models can be switched mid-session:
+Derived models cost no extra disk: they reference the same blobs as the parent
+and only add a manifest. The two used here:
 
-| Alias | Model | Size | Architecture |
-|---|---|---|---|
-| `q3c` | `qwen3-coder:30b` | 17.3 GB | MoE, ~3.3 B active |
-| `ds16` | `deepseek-coder-v2:16b` | 8.9 GB | MoE, ~2.4 B active |
-| `oss` | `gpt-oss:20b` | 12.8 GB | MoE, ~3.6 B active |
-| `q14` | `qwen2.5-coder:14b` | 9.0 GB | dense |
-| `q32` | `qwen2.5-coder:32b` | 19.9 GB | dense |
+| Model | Derived from | Parameters |
+|---|---|---|
+| `gpt-oss-cline` | `gpt-oss:20b` | `num_ctx 32768`, `temperature 1` |
+| `qwen3-coder-cline` | `qwen3-coder:30b` | `num_ctx 32768`, `repeat_penalty 1.1`, `top_p 0.8`, `top_k 20`, `temperature 0.7` |
 
-```text
-/model q32        switch model
-/add <file>       add a file to the chat
-/read-only <file> add a file as context Aider must not edit
-/drop <file>      remove a file from the chat
-/tokens           show what the current context costs
-/undo             revert Aider's last automatic commit
-```
+`repeat_penalty 1.1` is the usual guard against a small model looping on the same
+paragraph inside a single answer.
 
-Note that `/models <query>` searches the LiteLLM catalogue of remote providers,
-so it will never list your local models. Use the aliases above instead.
+### Which model for which task
+
+| Task | Model | Why |
+|---|---|---|
+| Refactors, features, writing tests | `gpt-oss-cline` | Best quality/speed compromise on 8 GB of VRAM |
+| Commit messages, PR titles and descriptions | `qwen2.5-coder:7b` | Fits entirely in VRAM, so these stay instant |
+
+Project rules live in `AGENTS.md` — add it to Cline's context at the start of a
+session so ownership checks, CSRF validation and the migration workflow are
+respected.
+
+### Why Cline replaced Aider
+
+Aider was used first, with a per-model context file and a set of `/model`
+aliases. It was dropped for three practical reasons:
+
+- **Fewer hallucinations** on the same local models and the same prompts —
+  Cline's tool-based editing gives the model less room to invent file contents
+  than a free-form diff it has to format correctly.
+- **Editor integration.** Cline runs inside VS Code, so the diff to review is the
+  one shown in the editor, instead of a terminal round-trip.
+- **No client-side model configuration to maintain.** Baking `num_ctx` into a
+  Modelfile fixes the window at the source, for every client, rather than in one
+  tool's settings file.
+
+Nothing about the Ollama server setup below changed with the switch — that part
+is client-agnostic.
 
 ### Limits of running LLMs locally
 
@@ -428,9 +447,35 @@ generated token is the *active* parameters, not the total. A mixture-of-experts
 model such as `qwen3-coder:30b` holds 30 B weights but activates only ~3.3 B per
 token, so it stays usable even when two thirds of it sits in system RAM. A dense
 model activates everything: once `qwen2.5-coder:32b` overflows 8 GB of VRAM,
-every token drags 19 GB across the PCIe bus. This is why a 30 B MoE model is the
-practical default here while a 32 B dense one is reserved for occasional
-questions rather than editing loops.
+every token drags 19 GB across the PCIe bus. This is why a MoE model is the
+practical default here while a 32 B dense one is unusable for editing loops.
+
+**Measured on the reference machine.** Same prompt for every model, a cold load
+each time, generation rate as reported by `ollama run --verbose`:
+
+| Model | Arch. | Size | Load | Prefill (tok/s) | **Generation (tok/s)** |
+|---|---|---|---|---|---|
+| `qwen2.5-coder:7b` | dense | 4.7 GB | 3.5 s | 276.0 | **31.9** |
+| `deepseek-coder-v2:16b` | MoE | 8.9 GB | 21.8 s | 23.9 | **18.8** |
+| `qwen3-coder:30b` | MoE | 18 GB | 35.3 s | 21.7 | **17.5** |
+| `gpt-oss:20b` | MoE | 13 GB | 27.9 s | 61.8 | **15.9** |
+| `qwen2.5-coder:14b` | dense | 9.0 GB | 30.4 s | 54.2 | **6.8** |
+| `qwen2.5-coder:32b` | dense | 19 GB | 38.4 s | 21.6 | **1.85** |
+
+Read it by architecture, not by size. `deepseek-coder-v2:16b` (MoE, 8.9 GB) is
+**2.8× faster** than `qwen2.5-coder:14b` (dense, 9.0 GB) at essentially the same
+footprint — the only difference is how many parameters each token activates.
+Below the VRAM ceiling that penalty disappears: the 7 B model is dense and the
+fastest of the set precisely because it never spills.
+
+At the other end, `qwen2.5-coder:32b` produces **1.85 tok/s** — roughly seven
+minutes for a single answer. It is not a slow option, it is not an option.
+
+Two cautions when comparing these figures. *Prefill* (ingesting the prompt) and
+*generation* are different rates, and the first is several times the second —
+quoting the prefill number overstates what the model actually feels like. And
+these come from one prompt on one machine: expect drift with a different context
+length or a warm cache, but the ordering holds.
 
 **The context window is not free.** Ollama 0.32 defaults to 4096 tokens, which
 silently truncates the repository map and the files submitted for editing. But
@@ -455,7 +500,8 @@ staying on the GPU is. Both windows were measured on the reference machine:
 | 65536 | 22 GB | 72% / 28% | 3.3 GB |
 | **32768** | **20 GB** | **69% / 31%** | **6.2 GB** |
 
-Generation runs at **~15.6 tok/s** either way. The lesson is that shrinking the
+Generation runs at **~16-17 tok/s** either way (the table above measured 17.5 at
+32768). The lesson is that shrinking the
 window buys far less GPU residency than the arithmetic suggests: 18 GB of
 weights will never fit in 6.9 GB of usable VRAM whatever the context, so the
 split is dominated by model size, not by the KV cache. Going below 32K would
@@ -474,11 +520,12 @@ per-model value is what actually runs.
 model stays resident for `OLLAMA_KEEP_ALIVE` (5 minutes). Raise that variable to
 `30m` if reloads become annoying — at the cost of holding the memory that long.
 
-**Precedence trap.** Aider sends `num_ctx` in every HTTP request, and a
-per-request option always wins over the server default. `OLLAMA_CONTEXT_LENGTH`
-therefore applies only to models **absent** from `.aider.model.settings.yml`.
-Add an entry there for every model you intend to use, or it will quietly run at
-the server default.
+**Precedence trap.** The effective window is the first of: an option sent with
+the request, then the model's own `PARAMETER num_ctx`, then
+`OLLAMA_CONTEXT_LENGTH`. Cline sends nothing, so the Modelfile value is what
+actually runs — and a model used *without* a derived variant silently falls back
+to the server default. Create the variant for every model you intend to drive
+from Cline.
 
 **Measure, do not trust the table.** The figures above are arithmetic, not a
 benchmark of your machine. Start a session, then in a second terminal:
@@ -540,18 +587,13 @@ does not always free the size shown by `ollama list`.
 | `%LOCALAPPDATA%\Ollama` | `server.log`, `app.log`, `db.sqlite` | Under a MB, rotated automatically |
 | `%USERPROFILE%\.ollama` | SSH keypair identifying the machine to the registry, plus an empty `cache/` | Effectively zero — do not delete the keys |
 
-**Aider's own caches live in the repository**, are covered by `.gitignore`, and
-stay small (~130 KB). Delete them only if the repository map looks stale after a
-large refactor — Aider rebuilds them on the next run:
+**Cline stores its task history in the VS Code extension's own storage**, not in
+the repository, so nothing accumulates here and `.gitignore` needs no entry for
+it.
 
-```powershell
-Remove-Item .aider.tags.cache.v4 -Recurse -Force
-Remove-Item .aider.chat.history.md, .aider.input.history -Force
-```
-
-Aider commits accepted changes automatically (`auto-commits: true`). Review its
-diffs like any other contribution: the project rules in `AGENTS.md` — ownership
-checks, CSRF validation, Alembic migrations — still apply.
+Review AI-written diffs like any other contribution: the project rules in
+`AGENTS.md` — ownership checks, CSRF validation, Alembic migrations — still
+apply.
 
 ## Dependencies
 
