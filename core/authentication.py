@@ -2,6 +2,7 @@
 
 from fastapi import Request
 from sqlmodel import Session, select
+from typing import Type, TypeVar
 
 from core.security import decode_access_token
 from schemas.User import User
@@ -25,7 +26,7 @@ def get_authenticated_user(request: Request, session: Session) -> User | None:
     return session.exec(select(User).where(User.mail == mail)).first()
 
 
-def load_owned_record(session: Session, model, record_id: int, user) -> object | None:
+def load_owned_record(session: Session, model: Type, record_id: int, user: User) -> object | None:
     """Return the record when it exists and belongs to user, otherwise None."""
     record = session.get(model, record_id)
     if record and user and record.user_id == user.id:

@@ -124,7 +124,7 @@ def delete_experience(
     # Le contrôle CSRF précède le chargement de la ressource destinée à être supprimée.
     validate_csrf_token(request, csrf_token)
 
-    # Utilisation du helper pour vérifier la propriété
+    # Vérification que l'expérience appartient bien à l'utilisateur authentifié avant suppression
     exp = load_owned_record(session, Experience, exp_id, user)
     
     if exp:
@@ -148,7 +148,7 @@ def edit_experience_form(
     if not user:
         return RedirectResponse("/login", status_code=303)
 
-    # Utilisation du helper pour vérifier la propriété
+    # Vérification que l'expérience appartient bien à l'utilisateur authentifié avant édition
     exp = load_owned_record(session, Experience, exp_id, user)
     
     if not exp:
@@ -184,7 +184,7 @@ def update_experience(
     # Le jeton CSRF protège la requête POST contre une soumission depuis un site tiers.
     validate_csrf_token(request, csrf_token)
 
-    # Utilisation du helper pour vérifier la propriété
+    # L'ID de l'enregistrement provient de l'URL et ne constitue jamais une preuve de propriété
     exp = load_owned_record(session, Experience, exp_id, user)
     
     if not exp:
