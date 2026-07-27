@@ -237,3 +237,6 @@ cache.*
 *.jpgeg
 *.pnj
 .aider*
+
+# Captures d'écran de travail
+/image.png
