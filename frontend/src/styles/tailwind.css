@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens. Tailwind v4 turns every entry here into utilities, so
+   --color-surface-900 is usable as bg-surface-900 / text-surface-900 / etc.
+--------------------------------------------------------------------------- */
+@theme {
+  --color-surface-950: #08090b;
+  --color-surface-900: #0d0f13;
+  --color-surface-850: #12151a;
+  --color-surface-800: #171b21;
+  --color-surface-700: #212630;
+  --color-surface-600: #2f3641;
+
+  --color-accent-300: #7dd3fc;
+  --color-accent-400: #38bdf8;
+  --color-accent-500: #0ea5e9;
+  --color-accent-600: #0284c7;
+  --color-accent-700: #0369a1;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    min-height: 100vh;
+    background-color: var(--color-surface-950);
+    background-image:
+      radial-gradient(60rem 40rem at 15% -10%, rgba(14, 165, 233, 0.10), transparent 60%),
+      radial-gradient(50rem 35rem at 110% 0%, rgba(56, 189, 248, 0.07), transparent 55%);
+    background-attachment: fixed;
+    color: var(--color-slate-200);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: rgba(14, 165, 233, 0.35);
+  }
+
+  /* Keyboard focus stays visible everywhere, mouse clicks stay clean. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-400);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-surface-900);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-surface-600);
+    border-radius: 9999px;
+    border: 2px solid var(--color-surface-900);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-surface-700);
+  }
+}
+
+@layer utilities {
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.18s ease-out both;
+  }
+
+  @keyframes overlay-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .animate-overlay-in {
+    animation: overlay-in 0.15s ease-out both;
+  }
+}
