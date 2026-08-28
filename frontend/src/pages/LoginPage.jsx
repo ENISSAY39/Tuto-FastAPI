@@ -43,7 +43,7 @@ export default function LoginPage() {
       footer={
         <>
           No account yet?{' '}
-          <a href="/signup.html" className="text-accent-400 hover:text-accent-300">
+          <a href="/signup.html" className="text-accent-600 hover:text-accent-700">
             Create one
           </a>
         </>

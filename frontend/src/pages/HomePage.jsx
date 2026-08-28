@@ -34,7 +34,7 @@ export default function HomePage() {
       <header className="mx-auto flex h-16 w-full max-w-6xl items-center px-4 sm:px-6">
         <a href="/" className="flex items-center gap-2.5">
           <Logo />
-          <span className="text-sm font-semibold text-slate-100">{APP_NAME}</span>
+          <span className="text-sm font-semibold text-ink-900">{APP_NAME}</span>
         </a>
 
         <div className="ml-auto flex items-center gap-2">
@@ -44,7 +44,7 @@ export default function HomePage() {
             rel="noreferrer noopener"
             title="Source code on GitHub"
             aria-label="Source code on GitHub"
-            className="mr-1 rounded-lg p-2 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100"
+            className="mr-1 rounded-lg p-2 text-ink-500 transition-colors hover:bg-ink-900/5 hover:text-ink-900"
           >
             <GitHubIcon className="h-5 w-5" />
           </a>
@@ -68,13 +68,13 @@ export default function HomePage() {
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 sm:px-6">
         <section className="py-20 text-center sm:py-28">
-          <p className="text-xs font-medium tracking-[0.2em] text-accent-400 uppercase">
+          <p className="text-xs font-medium tracking-[0.2em] text-accent-600 uppercase">
             FastAPI · SQLModel · React
           </p>
-          <h1 className="mx-auto mt-4 max-w-3xl text-4xl font-semibold text-balance text-slate-50 sm:text-5xl">
+          <h1 className="mx-auto mt-4 max-w-3xl text-4xl font-semibold text-balance text-ink-900 sm:text-5xl">
             Your experience and education, on one shareable page.
           </h1>
-          <p className="mx-auto mt-5 max-w-xl text-base text-pretty text-slate-400">
+          <p className="mx-auto mt-5 max-w-xl text-base text-pretty text-ink-500">
             Create an account, add where you studied and where you worked, and publish a portfolio
             anyone can read at a stable address.
           </p>
@@ -99,25 +99,25 @@ export default function HomePage() {
           {FEATURES.map((feature) => (
             <div
               key={feature.title}
-              className="rounded-xl border border-white/8 bg-surface-900/60 p-5"
+              className="rounded-xl border border-ink-900/10 bg-surface-900/60 p-5"
             >
-              <h2 className="text-sm font-semibold text-slate-100">{feature.title}</h2>
-              <p className="mt-2 text-sm text-slate-400">{feature.description}</p>
+              <h2 className="text-sm font-semibold text-ink-900">{feature.title}</h2>
+              <p className="mt-2 text-sm text-ink-500">{feature.description}</p>
             </div>
           ))}
         </section>
 
         <section className="py-20">
-          <div className="rounded-xl border border-white/8 bg-surface-900/60 p-8 text-center sm:p-10">
-            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-surface-800 text-slate-300">
+          <div className="rounded-xl border border-ink-900/10 bg-surface-900/60 p-8 text-center sm:p-10">
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-surface-800 text-ink-700">
               <GitHubIcon className="h-5 w-5" />
             </span>
 
-            <h2 className="mt-4 text-xl font-semibold text-slate-50">
+            <h2 className="mt-4 text-xl font-semibold text-ink-900">
               Open source — contributions welcome
             </h2>
 
-            <p className="mx-auto mt-3 max-w-xl text-sm text-pretty text-slate-400">
+            <p className="mx-auto mt-3 max-w-xl text-sm text-pretty text-ink-500">
               This is a student project, and the repository is public. If you want to collaborate,
               suggest a feature, or report something that does not work, issues and pull requests
               are very welcome.
@@ -138,13 +138,13 @@ export default function HomePage() {
               </LinkButton>
             </div>
 
-            <p className="mt-5 font-mono text-xs break-all text-slate-600">{REPO_LABEL}</p>
+            <p className="mt-5 font-mono text-xs break-all text-ink-400">{REPO_LABEL}</p>
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-white/8 py-6">
-        <p className="mx-auto max-w-6xl px-4 text-xs text-slate-600 sm:px-6">
+      <footer className="border-t border-ink-900/10 py-6">
+        <p className="mx-auto max-w-6xl px-4 text-xs text-ink-400 sm:px-6">
           {APP_NAME} — FastAPI, SQLModel &amp; React
         </p>
       </footer>

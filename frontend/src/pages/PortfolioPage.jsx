@@ -17,10 +17,10 @@ function requestedPortfolioId() {
 function Section({ title, entries, emptyLabel, subtitleOf, titleOf }) {
   return (
     <section className="mt-10">
-      <h2 className="text-sm font-semibold tracking-wide text-slate-300 uppercase">{title}</h2>
+      <h2 className="text-sm font-semibold tracking-wide text-ink-700 uppercase">{title}</h2>
 
       {entries.length === 0 ? (
-        <p className="mt-4 rounded-xl border border-dashed border-white/10 px-5 py-8 text-center text-sm text-slate-500">
+        <p className="mt-4 rounded-xl border border-dashed border-ink-900/12 px-5 py-8 text-center text-sm text-ink-400">
           {emptyLabel}
         </p>
       ) : (
@@ -77,7 +77,7 @@ export default function PortfolioPage() {
   if (loading) {
     return (
       <PageShell current="portfolios">
-        <div className="flex items-center justify-center gap-3 py-20 text-sm text-slate-500">
+        <div className="flex items-center justify-center gap-3 py-20 text-sm text-ink-400">
           <Spinner className="h-5 w-5" />
           Loading portfolio…
         </div>

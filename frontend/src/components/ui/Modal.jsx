@@ -45,7 +45,7 @@ export default function Modal({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:items-center">
       <div
-        className="animate-overlay-in fixed inset-0 bg-black/70 backdrop-blur-sm"
+        className="animate-overlay-in fixed inset-0 bg-ink-900/40 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -56,18 +56,18 @@ export default function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={typeof title === 'string' ? title : undefined}
-        className={`animate-fade-in-up relative z-10 w-full ${SIZES[size] ?? SIZES.md} rounded-xl border border-white/10 bg-surface-900 shadow-2xl shadow-black/60 focus:outline-none`}
+        className={`animate-fade-in-up relative z-10 w-full ${SIZES[size] ?? SIZES.md} rounded-xl border border-ink-900/12 bg-surface-900 shadow-2xl shadow-ink-900/15 focus:outline-none`}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-white/8 px-5 py-4">
+        <div className="flex items-start justify-between gap-4 border-b border-ink-900/10 px-5 py-4">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-slate-100">{title}</h2>
-            {description && <p className="mt-1 text-sm text-slate-400">{description}</p>}
+            <h2 className="text-base font-semibold text-ink-900">{title}</h2>
+            {description && <p className="mt-1 text-sm text-ink-500">{description}</p>}
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="-mr-1 cursor-pointer rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/5 hover:text-slate-200"
+            className="-mr-1 cursor-pointer rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-900/5 hover:text-ink-700"
           >
             <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
               <path
@@ -83,7 +83,7 @@ export default function Modal({
         <div className="px-5 py-4">{children}</div>
 
         {footer && (
-          <div className="flex justify-end gap-2 border-t border-white/8 px-5 py-4">{footer}</div>
+          <div className="flex justify-end gap-2 border-t border-ink-900/10 px-5 py-4">{footer}</div>
         )}
       </div>
     </div>,

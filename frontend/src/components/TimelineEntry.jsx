@@ -13,11 +13,11 @@ export default function TimelineEntry({ title, subtitle, entry, onEdit, onDelete
   const duration = formatDuration(entry.date_start, entry.date_end)
 
   return (
-    <article className="relative rounded-xl border border-white/8 bg-surface-900/60 p-5 transition-colors hover:border-white/15">
+    <article className="relative rounded-xl border border-ink-900/10 bg-surface-900/60 p-5 transition-colors hover:border-ink-900/20">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-base font-semibold text-balance text-slate-100">{title}</h3>
-          <p className="mt-0.5 text-sm text-accent-400">{subtitle}</p>
+          <h3 className="text-base font-semibold text-balance text-ink-900">{title}</h3>
+          <p className="mt-0.5 text-sm text-accent-600">{subtitle}</p>
         </div>
 
         {(onEdit || onDelete) && (
@@ -36,12 +36,12 @@ export default function TimelineEntry({ title, subtitle, entry, onEdit, onDelete
         )}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-400">
         <span>{formatDateRange(entry.date_start, entry.date_end)}</span>
         {duration && <Badge>{duration}</Badge>}
       </div>
 
-      <p className="mt-3 text-sm whitespace-pre-line text-slate-400">{entry.description}</p>
+      <p className="mt-3 text-sm whitespace-pre-line text-ink-500">{entry.description}</p>
     </article>
   )
 }

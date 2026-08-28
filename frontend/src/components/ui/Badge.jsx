@@ -1,10 +1,10 @@
 const TONES = {
-  neutral: 'border-white/10 bg-white/5 text-slate-300',
-  sky: 'border-sky-500/25 bg-sky-500/10 text-sky-300',
-  amber: 'border-amber-500/25 bg-amber-500/10 text-amber-300',
-  emerald: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
-  rose: 'border-rose-500/25 bg-rose-500/10 text-rose-300',
-  violet: 'border-violet-500/25 bg-violet-500/10 text-violet-300',
+  neutral: 'border-ink-900/12 bg-ink-900/5 text-ink-700',
+  teal: 'border-teal-200 bg-teal-50 text-teal-700',
+  amber: 'border-amber-200 bg-amber-50 text-amber-700',
+  emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  rose: 'border-rose-200 bg-rose-50 text-rose-700',
+  violet: 'border-violet-200 bg-violet-50 text-violet-700',
 }
 
 export default function Badge({ tone = 'neutral', className = '', children }) {

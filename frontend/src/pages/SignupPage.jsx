@@ -54,7 +54,7 @@ export default function SignupPage() {
       footer={
         <>
           Already registered?{' '}
-          <a href="/login.html" className="text-accent-400 hover:text-accent-300">
+          <a href="/login.html" className="text-accent-600 hover:text-accent-700">
             Log in
           </a>
         </>

@@ -34,7 +34,7 @@ export default function ConfirmDialog({
         </>
       }
     >
-      <p className="text-sm text-slate-400">This action cannot be undone.</p>
+      <p className="text-sm text-ink-500">This action cannot be undone.</p>
     </Modal>
   )
 }

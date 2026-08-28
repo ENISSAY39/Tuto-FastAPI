@@ -29,16 +29,16 @@ export default function SiteHeader({ current }) {
     [
       'rounded-lg px-3 py-1.5 text-sm transition-colors',
       current === name
-        ? 'bg-white/10 text-slate-100'
-        : 'text-slate-400 hover:bg-white/5 hover:text-slate-200',
+        ? 'bg-ink-900/10 text-ink-900'
+        : 'text-ink-500 hover:bg-ink-900/5 hover:text-ink-700',
     ].join(' ')
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/8 bg-surface-950/80 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-ink-900/10 bg-surface-950/80 backdrop-blur">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-4 px-4 sm:px-6">
         <a href="/" className="flex items-center gap-2.5">
           <Logo />
-          <span className="hidden text-sm font-semibold text-slate-100 sm:block">{APP_NAME}</span>
+          <span className="hidden text-sm font-semibold text-ink-900 sm:block">{APP_NAME}</span>
         </a>
 
         <nav className="flex items-center gap-1">
@@ -63,8 +63,8 @@ export default function SiteHeader({ current }) {
                 >
                   <Avatar firstName={user.first_name} name={user.name} size="sm" />
                   <div className="hidden leading-tight sm:block">
-                    <p className="text-sm text-slate-200">{fullNameOf(user)}</p>
-                    <p className="text-xs text-slate-500">{user.mail}</p>
+                    <p className="text-sm text-ink-700">{fullNameOf(user)}</p>
+                    <p className="text-xs text-ink-400">{user.mail}</p>
                   </div>
                 </a>
               )}
@@ -80,7 +80,7 @@ export default function SiteHeader({ current }) {
                 rel="noreferrer noopener"
                 title="Source code on GitHub"
                 aria-label="Source code on GitHub"
-                className="mr-1 hidden rounded-lg p-2 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100 sm:block"
+                className="mr-1 hidden rounded-lg p-2 text-ink-500 transition-colors hover:bg-ink-900/5 hover:text-ink-900 sm:block"
               >
                 <GitHubIcon className="h-5 w-5" />
               </a>

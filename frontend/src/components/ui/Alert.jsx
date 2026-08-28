@@ -1,8 +1,8 @@
 const TONES = {
-  error: 'border-rose-500/30 bg-rose-500/10 text-rose-200',
-  success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
-  info: 'border-sky-500/30 bg-sky-500/10 text-sky-200',
-  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-200',
+  error: 'border-rose-200 bg-rose-50 text-rose-800',
+  success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  info: 'border-teal-200 bg-teal-50 text-teal-800',
+  warning: 'border-amber-200 bg-amber-50 text-amber-800',
 }
 
 export default function Alert({ tone = 'info', className = '', children }) {

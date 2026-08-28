@@ -5,16 +5,16 @@ import { fullNameOf } from '../lib/format.js'
 function ContactRow({ label, value, href }) {
   return (
     <div className="min-w-0">
-      <p className="text-xs font-medium text-slate-500 uppercase">{label}</p>
+      <p className="text-xs font-medium text-ink-400 uppercase">{label}</p>
       {href ? (
         <a
           href={href}
-          className="mt-0.5 block truncate text-sm text-accent-400 hover:text-accent-300"
+          className="mt-0.5 block truncate text-sm text-accent-600 hover:text-accent-700"
         >
           {value}
         </a>
       ) : (
-        <p className="mt-0.5 truncate text-sm text-slate-200">{value}</p>
+        <p className="mt-0.5 truncate text-sm text-ink-700">{value}</p>
       )}
     </div>
   )
@@ -32,16 +32,16 @@ export default function ProfileCard({ user, actions }) {
         <Avatar firstName={user.first_name} name={user.name} size="lg" />
 
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-semibold text-balance text-slate-50">
+          <h1 className="text-2xl font-semibold text-balance text-ink-900">
             {fullNameOf(user)}
           </h1>
-          <p className="mt-1 text-sm text-slate-400">{user.age} years old</p>
+          <p className="mt-1 text-sm text-ink-500">{user.age} years old</p>
         </div>
 
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>
 
-      <div className="mt-6 grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-2">
+      <div className="mt-6 grid gap-4 border-t border-ink-900/10 pt-5 sm:grid-cols-2">
         <ContactRow label="Email" value={user.mail} href={`mailto:${user.mail}`} />
         <ContactRow label="Phone" value={user.phone} href={`tel:${user.phone}`} />
       </div>

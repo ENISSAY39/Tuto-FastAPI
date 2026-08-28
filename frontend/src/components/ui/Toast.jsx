@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ToastContext } from './toastContext.js'
 
 const TONES = {
-  success: 'border-emerald-500/30 bg-emerald-950/90 text-emerald-100',
-  error: 'border-rose-500/30 bg-rose-950/90 text-rose-100',
-  info: 'border-sky-500/30 bg-sky-950/90 text-sky-100',
+  success: 'border-emerald-200 bg-emerald-50 text-emerald-900',
+  error: 'border-rose-200 bg-rose-50 text-rose-900',
+  info: 'border-teal-200 bg-teal-50 text-teal-900',
 }
 
 const DURATION = 4000
@@ -67,7 +67,7 @@ export default function ToastProvider({ children }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`animate-fade-in-up pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg shadow-black/40 backdrop-blur ${
+            className={`animate-fade-in-up pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg shadow-ink-900/10 backdrop-blur ${
               TONES[toast.tone] ?? TONES.info
             }`}
           >

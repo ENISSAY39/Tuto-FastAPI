@@ -12,7 +12,7 @@ export default function Avatar({ firstName, name, size = 'md', className = '', .
     <span
       className={[
         'inline-flex shrink-0 items-center justify-center rounded-full',
-        'bg-surface-700 font-semibold text-slate-200',
+        'bg-surface-700 font-semibold text-ink-700',
         SIZES[size] ?? SIZES.md,
         className,
       ].join(' ')}

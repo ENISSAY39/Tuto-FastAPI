@@ -120,7 +120,7 @@ export default function ProfilePage() {
   if (loading) {
     return (
       <PageShell current="profile">
-        <div className="flex items-center justify-center gap-3 py-20 text-sm text-slate-500">
+        <div className="flex items-center justify-center gap-3 py-20 text-sm text-ink-400">
           <Spinner className="h-5 w-5" />
           Loading your portfolio…
         </div>
@@ -142,7 +142,7 @@ export default function ProfilePage() {
     return (
       <section className="mt-10">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold tracking-wide text-slate-300 uppercase">
+          <h2 className="text-sm font-semibold tracking-wide text-ink-700 uppercase">
             {section.title}
           </h2>
           <Button size="sm" onClick={() => openForm({ entry: null })}>

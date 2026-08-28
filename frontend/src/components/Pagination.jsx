@@ -18,7 +18,7 @@ export default function Pagination({ page, totalPages, hasPrevious, hasNext, onC
         Previous
       </Button>
 
-      <span className="text-xs text-slate-500">
+      <span className="text-xs text-ink-400">
         Page {page} of {totalPages}
       </span>
 

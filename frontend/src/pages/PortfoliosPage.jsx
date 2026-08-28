@@ -99,8 +99,8 @@ export default function PortfoliosPage() {
     <PageShell current="portfolios">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-50">Portfolios</h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <h1 className="text-2xl font-semibold text-ink-900">Portfolios</h1>
+          <p className="mt-1 text-sm text-ink-500">
             {result
               ? `${result.total_portfolios} public portfolio${
                   result.total_portfolios === 1 ? '' : 's'
@@ -117,15 +117,13 @@ export default function PortfoliosPage() {
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
           />
-          <Button type="submit" className="mb-0.5">
-            Search
-          </Button>
+          <Button type="submit">Search</Button>
         </form>
       </div>
 
       <div className="mt-8">
         {loading ? (
-          <div className="flex items-center justify-center gap-3 py-20 text-sm text-slate-500">
+          <div className="flex items-center justify-center gap-3 py-20 text-sm text-ink-400">
             <Spinner className="h-5 w-5" />
             Loading portfolios…
           </div>

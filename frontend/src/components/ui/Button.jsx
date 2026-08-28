@@ -2,12 +2,12 @@ import Spinner from './Spinner.jsx'
 
 const VARIANTS = {
   primary:
-    'bg-accent-500 text-white shadow-sm shadow-accent-500/25 hover:bg-accent-400 active:bg-accent-600',
+    'bg-accent-600 text-white shadow-sm shadow-accent-600/20 hover:bg-accent-700 active:bg-accent-800',
   ghost:
-    'border border-white/10 bg-white/0 text-slate-200 hover:border-white/20 hover:bg-white/5',
-  subtle: 'bg-surface-700 text-slate-100 hover:bg-surface-600',
-  danger: 'bg-rose-600 text-white hover:bg-rose-500 active:bg-rose-700',
-  quiet: 'text-slate-400 hover:bg-white/5 hover:text-slate-100',
+    'border border-ink-900/12 bg-transparent text-ink-700 hover:border-ink-900/25 hover:bg-ink-900/5',
+  subtle: 'bg-surface-700 text-ink-900 hover:bg-surface-600',
+  danger: 'bg-rose-600 text-white hover:bg-rose-700 active:bg-rose-800',
+  quiet: 'text-ink-500 hover:bg-ink-900/5 hover:text-ink-900',
 }
 
 const SIZES = {
