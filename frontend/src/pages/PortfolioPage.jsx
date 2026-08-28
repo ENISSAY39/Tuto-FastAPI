@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import PageShell from '../components/PageShell.jsx'
 import ProfileCard from '../components/ProfileCard.jsx'
 import TimelineEntry from '../components/TimelineEntry.jsx'
@@ -40,22 +40,25 @@ function Section({ title, entries, emptyLabel, subtitleOf, titleOf }) {
 }
 
 export default function PortfolioPage() {
+  // The address of this document never changes while it is open, so the
+  // requested id is read once and the initial state derived from it. A missing
+  // id is therefore an error the first render already knows about, with no
+  // request to make and nothing for the effect to correct afterwards.
+  const portfolioId = useMemo(() => requestedPortfolioId(), [])
+
   const [portfolio, setPortfolio] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(portfolioId !== null)
+  const [error, setError] = useState(
+    portfolioId === null ? 'This portfolio address is not valid.' : '',
+  )
 
   useEffect(() => {
-    const id = requestedPortfolioId()
-    if (id === null) {
-      setError('This portfolio address is not valid.')
-      setLoading(false)
-      return undefined
-    }
+    if (portfolioId === null) return undefined
 
     let cancelled = false
 
     api
-      .get(`/portfolios/${id}`)
+      .get(`/portfolios/${portfolioId}`)
       .then((data) => {
         if (!cancelled) setPortfolio(data)
       })
@@ -69,7 +72,7 @@ export default function PortfolioPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [portfolioId])
 
   if (loading) {
     return (

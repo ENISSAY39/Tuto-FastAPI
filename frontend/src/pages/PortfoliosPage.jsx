@@ -41,10 +41,6 @@ export default function PortfoliosPage() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError('')
-    syncAddressBar(query, page)
-
     const params = new URLSearchParams({ query, page: String(page) })
 
     api
@@ -52,11 +48,9 @@ export default function PortfoliosPage() {
       .then((data) => {
         if (cancelled) return
         setResult(data)
-        // The server clamps an out-of-range page, so adopt the page it
-        // actually answered with rather than the one that was requested.
-        if (data.current_page !== page) {
-          setSearchState((current) => ({ ...current, page: data.current_page }))
-        }
+        // The server clamps an out-of-range page, so the address bar records
+        // the page it actually answered with rather than the one requested.
+        syncAddressBar(data.query, data.current_page)
       })
       .catch((loadError) => {
         if (!cancelled) setError(loadError.message)
@@ -72,15 +66,31 @@ export default function PortfoliosPage() {
     }
   }, [query, page, reloadKey])
 
+  /**
+   * Every navigation goes through here: the spinner is armed by the gesture
+   * that triggers the request, never by the effect that performs it.
+   */
+  const goTo = (nextState) => {
+    setLoading(true)
+    setError('')
+    setSearchState(nextState)
+  }
+
   const handleSearch = (event) => {
     event.preventDefault()
     // A new search always restarts at the first page.
-    setSearchState({ query: draft.trim(), page: 1 })
+    goTo({ query: draft.trim(), page: 1 })
   }
 
   const clearSearch = () => {
     setDraft('')
-    setSearchState({ query: '', page: 1 })
+    goTo({ query: '', page: 1 })
+  }
+
+  const retry = () => {
+    setLoading(true)
+    setError('')
+    setReloadKey((key) => key + 1)
   }
 
   const portfolios = result?.portfolios ?? []
@@ -124,7 +134,7 @@ export default function PortfoliosPage() {
             {error}{' '}
             <button
               type="button"
-              onClick={() => setReloadKey((key) => key + 1)}
+              onClick={retry}
               className="cursor-pointer underline underline-offset-2"
             >
               Retry
@@ -159,9 +169,7 @@ export default function PortfoliosPage() {
               totalPages={result.total_pages}
               hasPrevious={result.has_previous}
               hasNext={result.has_next}
-              onChange={(nextPage) =>
-                setSearchState((current) => ({ ...current, page: nextPage }))
-              }
+              onChange={(nextPage) => goTo({ query, page: nextPage })}
             />
           </>
         )}
