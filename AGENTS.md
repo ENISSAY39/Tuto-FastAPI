@@ -6,43 +6,51 @@ These instructions apply to the entire repository.
 
 ## Project overview
 
-This is a server-rendered e-portfolio application built with Python 3.12,
-FastAPI, SQLModel, Jinja2, and plain CSS. Docker Compose uses PostgreSQL 17 for
-persistent data; SQLite remains the fallback for direct local runs and the
-isolated test database. Keep the current architecture simple: route handlers
-render HTML templates and process HTML form submissions; this is not a JSON API
-or a JavaScript SPA.
+This is an e-portfolio application split into a Python 3.12 JSON API and a
+React frontend. The API is built with FastAPI and SQLModel; the interface is a
+React 19 multi-page application built with Vite and Tailwind CSS v4. Docker
+Compose uses PostgreSQL 17 for persistent data; SQLite remains the fallback for
+direct local runs and the isolated test database.
 
-Run all project commands from the repository root. Alembic configuration,
-`templates/`, and `static/` are resolved relative to the repository.
+Keep the current architecture: route handlers accept and return JSON under the
+`/api` prefix and never render HTML, and the interface is a set of separate
+pages rather than a single-page application with a client-side router.
+
+Run backend commands from the repository root; run frontend commands from
+`frontend/`.
 
 ## Important files
 
-- `main.py`: creates the FastAPI app, installs CSRF middleware, mounts static
-  files, registers routers, and runs migrations plus optional seeding during
-  the application lifespan.
-- `routers/`: HTTP routes. Authentication and public discovery are in
-  `auth.py`; user/profile routes are in `user.py`; owned CRUD is split between
-  `experience.py` and `education.py`.
-- `schemas/`: SQLModel table models. Preserve the existing case-sensitive file
+- `main.py`: creates the FastAPI app, installs the JSON error handlers,
+  registers routers, mounts the compiled frontend, and creates the schema plus
+  optional seeding during the application lifespan.
+- `routers/`: HTTP routes, all prefixed with `/api`. Public discovery and login
+  are in `auth.py`; signup, dashboard and public portfolio are in `user.py`;
+  owned CRUD is split between `experience.py` and `education.py`.
+- `schemas/`: SQLModel table models plus `api.py`, which declares every JSON
+  request and response body. Preserve the existing case-sensitive table file
   names and imports (`User.py`, `Experiences.py`, and `Education.py`).
 - `core/config.py`: validated environment settings and production-sensitive
-  defaults for cookies and demonstration data.
-- `core/database.py`: database URL selection, SQLModel engine, Alembic startup
-  migration helper, and per-request session dependency. Resolution order is an
-  explicit `DATABASE_URL`, Compose-style `POSTGRES_*` values, then SQLite.
-- `core/authentication.py`: resolves the authenticated user from the JWT cookie.
-- `core/csrf.py`: creates and validates double-submit CSRF tokens.
+  defaults for demonstration data.
+- `core/database.py`: database URL selection, SQLModel engine,
+  `create_db_and_tables()`, and the per-request session dependency. Resolution
+  order is an explicit `DATABASE_URL`, Compose-style `POSTGRES_*` values, then
+  SQLite.
+- `core/authentication.py`: resolves the authenticated user from the
+  `Authorization: Bearer` header and exposes the `CurrentUser` dependency.
 - `core/security.py`: password hashing and JWT creation/validation.
 - `core/validation.py`: shared normalization and form-validation helpers.
-- `migrations/`: Alembic environment and versioned schema migrations.
-- `templates/`: Jinja2 pages and HTML forms.
-- `static/`: page-specific and shared CSS.
+- `frontend/`: the Vite multi-page application — one HTML document per screen,
+  one React entry per document in `src/entries/`, shared UI in
+  `src/components/`, and the API client, session storage and formatters in
+  `src/lib/`.
+- `frontend/src/styles/tailwind.css`: the design tokens every component builds
+  on.
 - `seed.py`: idempotent sample-data seeding plus a destructive `reset_db()`
   helper.
 - `tests/`: pytest unit and HTTP integration tests using isolated databases.
-- `.github/workflows/ci.yml`: Python 3.12 dependency, import, migration, and
-  test checks for pushes and pull requests.
+- `.github/workflows/ci.yml`: a Python job (dependency, import and test checks)
+  and a Node job (install, lint and build) for pushes and pull requests.
 - `docker-compose.yml`: local PostgreSQL, pgAdmin, and application services.
 - `database.db`: optional SQLite fallback state; it is intentionally ignored by
   Git and is not used by Docker Compose.
@@ -58,6 +66,14 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
+Install the frontend dependencies from the exact lockfile:
+
+```powershell
+cd frontend
+npm ci
+cd ..
+```
+
 Copy the environment template, then replace every placeholder secret:
 
 ```powershell
@@ -68,17 +84,29 @@ For direct non-Docker development, `SECRET_KEY` is required and SQLite is used
 when neither `DATABASE_URL` nor `POSTGRES_HOST` is configured. Docker Compose
 also requires the PostgreSQL and pgAdmin values documented in `.env.example`.
 
-Never commit `.env`, JWTs, passwords, password hashes, or `database.db`.
+Never commit `.env`, JWTs, passwords, password hashes, `database.db`, or
+`frontend/node_modules`.
 
-Start the development server:
+Local development runs two processes. Start the API:
 
 ```powershell
 fastapi dev main.py
 ```
 
-The application is available at `http://127.0.0.1:8000`. Startup upgrades the
-configured database to the latest Alembic revision and synchronizes optional
-demo data according to `APP_ENV` and `SEED_DEMO_DATA`.
+Then, in a second shell, the interface:
+
+```powershell
+cd frontend
+npm run dev
+```
+
+Open `http://127.0.0.1:5173` — the Vite dev server serves the pages and proxies
+`/api` to FastAPI on port 8000, so browsing the FastAPI port directly shows only
+the API. In production one container serves both, because the image builds
+`frontend/dist` and `main.py` mounts it.
+
+Startup creates any missing table in the configured database and synchronizes
+optional demo data according to `APP_ENV` and `SEED_DEMO_DATA`.
 
 Useful Docker commands:
 
@@ -96,27 +124,35 @@ configuration.
 ## Implementation conventions
 
 - Use four-space Python indentation, clear snake_case names, and type hints for
-  new or changed functions. Keep imports grouped as standard library,
+  new or changed functions. Keep the existing import grouping: standard library,
   third-party packages, then local modules.
 - Keep route handlers and SQLModel database access synchronous unless a task
   deliberately converts the complete request path; do not mix in async database
   access piecemeal.
-- Add routes to the router matching their domain. When adding a router module,
-  also register it in `main.py`.
+- Add routes to the router matching their domain, always under the `/api`
+  prefix. When adding a router module, also register it in `main.py` **before**
+  the static mount, which would otherwise shadow it.
 - Obtain database sessions through `Depends(get_session)` (or the existing
   `SessionDep` alias); do not create long-lived global sessions.
-- After a successful form POST, return a `303` redirect so a browser refresh
-  does not repeat the mutation.
-- Keep HTML form `name` attributes synchronized with the route's `Form(...)`
-  parameters. Create/edit templates share the `exp` and `edu` context values,
-  so preserve both modes when changing them.
-- Pass `request` to `TemplateResponse` and include it in template context where
-  required by the existing Starlette/Jinja2 pattern.
-- Keep styling in `static/*.css`. Preserve the current server-rendered approach
-  unless a task explicitly calls for a frontend architecture change.
-- Store `User.birth_date` as `date`. Experience and education dates are
-  currently stored as `datetime` and parsed from form input with `%Y-%m-%d`.
-- Use UTF-8 and preserve existing French and English copy. Avoid unrelated text,
+- Declare every request and response body in `schemas/api.py`. Type incoming
+  fields as `str` and validate them with `core/validation.py`, which owns the
+  rules and the user-facing wording; never return a SQLModel table instance
+  directly, so a stored column cannot leak into a response by accident.
+- Report failures by raising `HTTPException`. The handlers in `main.py` turn
+  every error into `{"error": "..."}`, which is the single key the client reads;
+  do not build error responses by hand.
+- Store `User.birth_date` as `date`. Experience and education dates are stored
+  as `datetime` and parsed with `%Y-%m-%d`, and are serialized back as plain
+  calendar dates — a timestamp would be re-read in the visitor's own timezone
+  and could display a day early.
+- In `frontend/`, build UI from the components in `src/components/ui/` and the
+  tokens in `src/styles/tailwind.css` rather than introducing new colours or
+  one-off controls. Adding a page means adding its HTML document, its entry in
+  `src/entries/`, and its input line in `vite.config.js`.
+- Keep page access guards in the entry file, before React mounts, so a protected
+  page never renders for a logged-out visitor.
+- Use UTF-8 and preserve existing French and English copy. Comments are French
+  in `routers/` and English in `core/` and `frontend/`. Avoid unrelated text,
   naming, or formatting rewrites.
 
 ## TDD workflow (qwen3-coder:30b / qwen2.5-coder:32b)
@@ -152,34 +188,36 @@ rest of this codebase.
 
 ## Authentication and data-ownership rules
 
-- Protected routes read the `access_token` HTTP-only cookie, decode it, use the
-  JWT `sub` claim as the user's email, and load that user from the database.
-- Treat a missing, invalid, or expired token and a missing user as unauthenticated.
-  Preserve the current redirect behavior unless a task changes the UX.
-- Every state-changing HTML form route must validate the CSRF token submitted
-  by the form against the HTTP-only CSRF cookie before applying the mutation.
+- Protected routes read the `Authorization: Bearer <token>` header, decode it,
+  use the JWT `sub` claim as the user's email, and load that user from the
+  database. Use the `CurrentUser` dependency rather than repeating that logic.
+- Treat a missing, invalid, or expired token and a missing user as
+  unauthenticated, and answer `401` so the client can clear its stored session.
+- There is no CSRF layer, and reintroducing one would be pointless as long as
+  authentication stays header-based: a cross-site request carries no ambient
+  credential. Do not add cookie authentication without also restoring CSRF
+  protection.
 - Normalize email addresses before account lookup or persistence so application
   checks remain aligned with the database uniqueness constraint.
 - Before reading for edit, updating, or deleting an `Experience` or `Education`,
   verify that its `user_id` matches the authenticated user's `id`. Never trust a
-  path ID or form value as proof of ownership.
+  path ID or request body value as proof of ownership, and never add `user_id`
+  to a request model.
+- A record that does not exist and a record belonging to someone else must get
+  the same `404`, so a response never reveals that a foreign record exists.
 - Hash new passwords with `hash_password`; never store or log plaintext
-  passwords. Do not print tokens, secrets, cookie values, or full credentials.
-- If cookie settings are changed, keep local development and production needs
-  separate. Production authentication cookies should be secure, HTTP-only, and
-  use an intentional SameSite policy.
+  passwords. Do not print tokens, secrets, or full credentials. No response
+  model may expose `hashed_password`.
 
 ## Database and seed safety
 
-- Alembic is the migration framework. Any persisted model/schema change must
-  include a reviewed migration under `migrations/versions/`; never rely on
-  `SQLModel.metadata.create_all()` to evolve existing data.
-- Never rewrite or delete an Alembic revision that may already have been
-  applied. Create a new forward migration and review generated operations,
-  especially PostgreSQL type conversions and constraints.
-- Application startup calls `run_database_migrations()` before serving requests
-  or synchronizing demo data. Verify new migrations with `upgrade`, `current`,
-  and `check` against an isolated or explicitly selected database.
+- There is no migration framework. `create_db_and_tables()` runs at startup and
+  only issues `CREATE TABLE IF NOT EXISTS`, so it creates missing tables but
+  never alters or drops an existing one.
+- A change to a persisted model therefore does **not** reach a database that
+  already has that table. Say so explicitly when proposing one, and describe how
+  the existing environments are expected to be updated; do not assume startup
+  will apply it.
 - `reset_db()` drops every table on the currently configured engine, including
   PostgreSQL. Do not call it or remove `database.db` unless the user explicitly
   asks to reset local data. Tests for destructive helpers must first replace the
@@ -194,10 +232,11 @@ rest of this codebase.
 
 ## Verification
 
-The repository has a smoke-level pytest suite: one nominal case and one
-"not authorized" case per route, plus a startup check. `pytest.ini` reports
-line and branch coverage for visibility but does not fail the run below a
-threshold. GitHub Actions runs the suite on every push and pull request:
+The repository has a smoke-level pytest suite: nominal and "not authorized"
+cases per route, ownership checks on both owned resources, and a startup check.
+`pytest.ini` reports line and branch coverage for visibility but does not fail
+the run below a threshold. GitHub Actions runs both suites on every push and
+pull request.
 
 ```powershell
 python -m pytest
@@ -210,30 +249,33 @@ backend or startup changes. The `-B` flag avoids writing bytecode:
 python -B -c "from main import app; print(app.title)"
 ```
 
-No linter is currently configured; do not claim lint verification unless a
-linter is added and actually executed.
-
-For route, template, or CSS changes, start the app and smoke-test the affected
-flow in a browser. Depending on scope, check:
-
-- `/`, search, pagination, and `/portfolio/{user_id}` as a signed-out visitor;
-- registration, login, `/profil`, and logout;
-- experience and education create, edit, and delete operations;
-- attempts to edit or delete records belonging to another user;
-- invalid or expired authentication cookies.
-
-For migration changes, verify at minimum:
+After any frontend change, both of these must pass:
 
 ```powershell
-python -m alembic upgrade head
-python -m alembic current
-python -m alembic check
+cd frontend
+npm run lint
+npm run build
 ```
 
+ESLint covers the frontend only. **No Python linter is configured** — do not
+claim lint verification for Python unless one is added and actually executed.
+
+For route or interface changes, start both processes and smoke-test the
+affected flow in a browser. Depending on scope, check:
+
+- the landing page, the directory, its search and pagination, and a public
+  portfolio as a signed-out visitor;
+- registration, login, the dashboard, and logout;
+- experience and education create, edit, and delete operations;
+- attempts to edit or delete records belonging to another user;
+- an invalid or expired token, which must return the visitor to the login page
+  rather than leaving a broken screen.
+
 For Docker-related changes, run `docker compose config` and, when Docker is
-available, build and start the affected service. Before finishing any task,
-inspect the diff and ensure generated files, local data, coverage output, and
-secrets are not included.
+available, build and start the affected service — the build now includes the
+frontend stage, so a frontend error fails the image build. Before finishing any
+task, inspect the diff and ensure generated files, local data, coverage output,
+`node_modules`, and secrets are not included.
 
 ## Docker safety
 

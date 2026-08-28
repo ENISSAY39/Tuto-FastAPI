@@ -23,7 +23,9 @@ The platform provides both public and private features:
 * Portfolio search system
 * Portfolio pagination system
 
-The application follows a classic web architecture with a FastAPI backend, Jinja2 templates for rendering, and PostgreSQL for data persistence in Docker. SQLite remains available as a fallback for local runs outside Docker.
+The application is split in two: a FastAPI backend exposing a JSON API under `/api`, and a React interface that consumes it. PostgreSQL persists the data in Docker, and SQLite remains available as a fallback for local runs outside Docker.
+
+The interface is a **multi-page application**: each screen is its own HTML document with its own React entry point, and moving between screens is a normal browser navigation rather than client-side routing. In production a single container serves both — the image builds the interface into static files that the API server also serves.
 
 ---
 
@@ -39,15 +41,15 @@ The application follows a classic web architecture with a FastAPI backend, Jinja
 
 ### Security
 
-* JWT Authentication
-* HTTP-only Cookies
+* JWT Authentication (Bearer token)
 * Argon2 Password Hashing
+* Server-side ownership checks on every record
 
 ### Frontend
 
-* HTML
-* CSS
-* Jinja2 Templates
+* React 19
+* Vite (multi-page build)
+* Tailwind CSS v4
 
 ### DevOps
 
@@ -108,14 +110,42 @@ The application follows a classic web architecture with a FastAPI backend, Jinja
 
 ## Application Routes
 
-| Route             | Description       |
-| ----------------- | ----------------- |
-| `/`               | Public homepage   |
-| `/search`         | Portfolio search  |
-| `/login`          | Login page        |
-| `/create_user`    | User registration |
-| `/profil`         | Private dashboard |
-| `/portfolio/{id}` | Public portfolio  |
+### Pages
+
+| Page               | Description                          |
+| ------------------ | ------------------------------------ |
+| `/`                | Landing page                         |
+| `/portfolios.html` | Public directory, search, pagination |
+| `/portfolio.html?id={id}` | Public portfolio               |
+| `/login.html`      | Login                                |
+| `/signup.html`     | Registration                         |
+| `/profile.html`    | Private dashboard                    |
+
+### API
+
+Every endpoint answers JSON, and reports a failure as `{"error": "..."}`.
+Protected endpoints expect an `Authorization: Bearer <token>` header.
+
+| Method   | Endpoint                  | Auth | Description                          |
+| -------- | ------------------------- | ---- | ------------------------------------ |
+| `GET`    | `/api/health`             | no   | Application and database liveness    |
+| `GET`    | `/api/portfolios`         | no   | Directory; `?query=` and `?page=`    |
+| `GET`    | `/api/portfolios/{id}`    | no   | One public portfolio                 |
+| `POST`   | `/api/signup`             | no   | Create an account                    |
+| `POST`   | `/api/login`              | no   | Returns `{token, user}`              |
+| `POST`   | `/api/logout`             | yes  | Stateless acknowledgement            |
+| `GET`    | `/api/me`                 | yes  | Own profile, experiences, educations |
+| `GET`    | `/api/experiences`        | yes  | Own experiences                      |
+| `POST`   | `/api/experiences`        | yes  | Add an experience                    |
+| `PUT`    | `/api/experiences/{id}`   | yes  | Update an owned experience           |
+| `DELETE` | `/api/experiences/{id}`   | yes  | Delete an owned experience           |
+| `GET`    | `/api/educations`         | yes  | Own education entries                |
+| `POST`   | `/api/educations`         | yes  | Add an education entry               |
+| `PUT`    | `/api/educations/{id}`    | yes  | Update an owned education entry      |
+| `DELETE` | `/api/educations/{id}`    | yes  | Delete an owned education entry      |
+
+A record belonging to another account answers `404`, exactly like one that does
+not exist, so a response never reveals that a foreign record exists.
 
 ---
 
@@ -184,48 +214,46 @@ Relationship rules:
 ```text
 .
 ├── core/
-│   ├── database_2.py
-│   └── security.py
+│   ├── authentication.py     # Bearer token -> User, CurrentUser dependency
+│   ├── config.py             # validated environment settings
+│   ├── database.py           # engine, schema creation, session dependency
+│   ├── security.py           # Argon2 hashing, JWT signing
+│   └── validation.py         # shared input rules and their messages
 │
-├── routers/
-│   ├── auth.py
-│   ├── education.py
-│   └── experience.py
-│   └── user.py
-    
-
-
+├── routers/                  # every route lives under /api
+│   ├── auth.py               # directory, search, login, logout
+│   ├── user.py               # signup, dashboard, public portfolio
+│   ├── experience.py         # owned CRUD
+│   └── education.py          # owned CRUD
 │
 ├── schemas/
-│   ├── User.py
-│   ├── Experience.py
-│   └── Education.py
+│   ├── User.py               # SQLModel tables
+│   ├── Experiences.py
+│   ├── Education.py
+│   └── api.py                # JSON request and response bodies
 │
-├── static/
-│   ├── base.css
-│   ├── home.css
-│   ├── login_style.css
-│   ├── create_user.css
-│   └── public_profile.css
-│   └── login.css
-
-
-│
-├── templates/
-│   ├── home.html
+├── frontend/
+│   ├── index.html            # one document per screen
 │   ├── login.html
-│   ├── profil.html
-│   ├── experience.html
-│   ├── education.html
-│   └── public_profile.html
-│   └── create_user.html
-
+│   ├── signup.html
+│   ├── portfolios.html
+│   ├── portfolio.html
+│   ├── profile.html
+│   ├── vite.config.js        # declares those six entries, proxies /api
+│   └── src/
+│       ├── entries/          # one React mount per document
+│       ├── pages/            # page-level components
+│       ├── components/       # shared UI, with ui/ holding the primitives
+│       ├── lib/              # API client, session, formatters
+│       └── styles/           # Tailwind theme and design tokens
 │
+├── tests/
 ├── docker-compose.yml
-├── dockerfile
+├── dockerfile                # builds the frontend, then the Python runtime
 ├── requirements.txt
 ├── seed.py
 └── main.py
+
 ```
 
 ---
@@ -269,10 +297,51 @@ docker compose logs -f eportfolio
 ```
 
 The application is available at `http://127.0.0.1:8000` and pgAdmin at
-`http://127.0.0.1:5050`. Docker Compose is the reference full-stack development
-workflow for this project; running `fastapi dev` directly on the host is not
-required. The isolated automated test suite runs directly in Python as
-described below.
+`http://127.0.0.1:5050`. The image builds the interface itself, so that single
+address serves both the pages and the API. Docker Compose is the reference
+full-stack workflow for this project.
+
+## Local development without Docker
+
+Working on the interface is faster outside Docker, because the Vite dev server
+reloads a change instantly instead of rebuilding an image. This mode runs **two
+processes**.
+
+Install both sets of dependencies once:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+
+cd frontend
+npm ci
+cd ..
+```
+
+Start the API in one shell:
+
+```powershell
+fastapi dev main.py
+```
+
+Start the interface in a second shell:
+
+```powershell
+cd frontend
+npm run dev
+```
+
+Then open **`http://127.0.0.1:5173`**, not the FastAPI port: the Vite server
+serves the pages and forwards every `/api` call to FastAPI on port 8000.
+Browsing port 8000 directly shows only the API, because `frontend/dist` does
+not exist until you run `npm run build`.
+
+With `SEED_DEMO_DATA=true`, startup fills the database with ten demonstration
+portfolios (one education entry and two experiences each), so the directory and
+the search have something to show immediately. Those accounts log in with the
+password `test` — for example `user1@mail.com`. Seeding is idempotent and
+disabled by default in production.
 
 ## Automated tests
 
@@ -288,11 +357,20 @@ python -m pip install -r requirements.txt
 python -m pytest
 ```
 
-`pytest.ini` enables branch coverage for the application code and enforces a
-minimum of 95%. The terminal report lists uncovered lines. GitHub
-Actions runs the same command for every push and pull request, after checking
-that the application imports and that Alembic can build a schema matching the
-SQLModel metadata on an isolated SQLite database.
+`pytest.ini` enables branch coverage for the application code and the terminal
+report lists uncovered lines.
+
+The interface has its own checks, run from `frontend/`:
+
+```powershell
+npm run lint
+npm run build
+```
+
+GitHub Actions runs both suites on every push and pull request: a Python job
+that verifies the dependency set, checks that the application imports, and runs
+pytest against an isolated SQLite database, and a Node job that installs from
+the lockfile, lints, and builds the interface.
 
 ## AI-assisted development with local LLMs
 
@@ -416,8 +494,7 @@ paragraph inside a single answer.
 | Commit messages, PR titles and descriptions | `qwen2.5-coder:7b` | Fits entirely in VRAM, so these stay instant |
 
 Project rules live in `AGENTS.md` — add it to Cline's context at the start of a
-session so ownership checks, CSRF validation and the migration workflow are
-respected.
+session so ownership checks and the schema-change workflow are respected.
 
 ### Why Cline replaced Aider
 
@@ -592,8 +669,8 @@ the repository, so nothing accumulates here and `.gitignore` needs no entry for
 it.
 
 Review AI-written diffs like any other contribution: the project rules in
-`AGENTS.md` — ownership checks, CSRF validation, Alembic migrations — still
-apply.
+`AGENTS.md` — ownership checks, the JSON error envelope, schema changes —
+still apply.
 
 ## Dependencies
 
@@ -606,8 +683,7 @@ This section explains the key dependencies and why they were chosen.
 | `fastapi` | Web framework — chosen for its automatic OpenAPI docs, native Pydantic integration, and async support |
 | `uvicorn` | ASGI server used to run the FastAPI app in production |
 | `starlette` | Underlying toolkit FastAPI is built on (routing, middleware, static files) |
-| `jinja2` | HTML templating engine for server-side rendering |
-| `python-multipart` | Required to handle HTML form submissions (login, registration) |
+| `pydantic-settings` | Loads and validates environment configuration, failing fast on an unsafe setup |
 
 ### Database
 
@@ -615,7 +691,6 @@ This section explains the key dependencies and why they were chosen.
 |---|---|
 | `sqlmodel` | ORM chosen for its dual role: defines models used both as database tables and as Pydantic validation schemas, avoiding code duplication |
 | `sqlalchemy` | Underlying database engine used by SQLModel |
-| `alembic` | Applies versioned and reproducible database schema migrations |
 | `psycopg` | PostgreSQL driver used by SQLAlchemy in Docker |
 | `greenlet` | Required by SQLAlchemy for async context support |
 
@@ -652,6 +727,21 @@ This section explains the key dependencies and why they were chosen.
 | `pytest-cov`, `coverage` | Measure line and branch coverage and enforce the initial CI threshold |
 
 > **Note:** Some packages in `requirements.txt` are transitive dependencies (automatically installed by the packages above) and are not imported directly in the application code.
+
+### Frontend
+
+Declared in `frontend/package.json` and locked in `frontend/package-lock.json`.
+
+| Package | Role |
+|---|---|
+| `react`, `react-dom` | Render the interface; each page mounts its own root |
+| `vite` | Dev server with instant reload, and the production build that emits one bundle per page |
+| `@vitejs/plugin-react` | Adds JSX and fast refresh to Vite |
+| `tailwindcss`, `@tailwindcss/vite` | Utility styling driven by the design tokens in `src/styles/tailwind.css` |
+| `eslint` and its React plugins | Catch invalid hook and effect usage before it reaches the browser |
+
+There is deliberately no routing library: pages are separate documents, so
+navigation is handled by the browser.
 
 ---
 
@@ -742,92 +832,42 @@ On the first connection, register the PostgreSQL server with these values:
 
 Use `db`, not `localhost`, because pgAdmin connects to PostgreSQL through the internal Docker Compose network.
 
-### Database migrations
+### Changing the database schema
 
-The files in `schemas/` are SQLModel table definitions. Changing one of these
-files changes the expected Python metadata, but it does not alter an existing
-PostgreSQL database by itself. Alembic records every structural database change
-as a versioned Python file under `migrations/versions/`.
+The files in `schemas/` are SQLModel table definitions. At startup `main.py`
+calls `create_db_and_tables()`, which issues `CREATE TABLE IF NOT EXISTS` for
+every declared table.
 
-At application startup, `main.py` automatically runs the equivalent of
-`alembic upgrade head`. This applies existing migrations, but generating a new
-migration remains an explicit developer action so that its SQL operations can
-be reviewed before they reach a shared database.
+That creates tables the database does not have yet. It does **not** alter a
+table that already exists: adding a column to `schemas/User.py` has no effect on
+a PostgreSQL volume that already holds a `user` table, and the application will
+then fail when it queries the missing column.
 
-#### Change a schema with the Docker workflow
+There is no migration framework in this project, so a change to an existing
+table has to be applied deliberately. Depending on the situation:
 
-Run every command below from the repository root in PowerShell.
-
-1. Start PostgreSQL and make sure the application image contains the current
-   dependencies:
+* **Local development, data you can lose.** Drop the volume and let startup
+  recreate the schema. This deletes every row:
 
 ```powershell
-docker compose up -d db
-docker compose build eportfolio
+docker compose down -v
+docker compose up -d --build
 ```
 
-2. Apply all migrations that already exist before changing the schema:
+* **Data you want to keep.** Apply the change by hand with SQL before deploying
+  the code, for example through pgAdmin or `psql`:
 
-```powershell
-docker compose run --rm --no-deps --volume "${PWD}:/app" eportfolio python -m alembic upgrade head
+```sql
+ALTER TABLE "user" ADD COLUMN bio VARCHAR;
 ```
 
-3. Modify the relevant file, for example `schemas/User.py`:
+* **A shared environment.** Adopt a migration tool before the first schema
+  change that matters. Anything else is a manual step someone will eventually
+  forget to run.
 
-```python
-bio: str | None = Field(default=None)
-```
-
-4. Generate a migration. The bind mount is required so that the generated file
-   is written into the host repository instead of disappearing with the
-   temporary container:
-
-```powershell
-docker compose run --rm --no-deps --volume "${PWD}:/app" eportfolio python -m alembic revision --autogenerate -m "add user bio"
-```
-
-5. Open the new file in `migrations/versions/` and review both `upgrade()` and
-   `downgrade()`. Autogeneration is only a proposal. In particular:
-
-   * a renamed column can be detected as a destructive drop followed by an add;
-   * a new non-nullable column can fail when the table already contains rows;
-   * a type change can require an explicit PostgreSQL conversion;
-   * an unexpected `drop_table()` or `drop_column()` must not be applied.
-
-6. Apply and verify the new migration:
-
-```powershell
-docker compose run --rm --no-deps --volume "${PWD}:/app" eportfolio python -m alembic upgrade head
-docker compose run --rm --no-deps --volume "${PWD}:/app" eportfolio python -m alembic current
-docker compose run --rm --no-deps --volume "${PWD}:/app" eportfolio python -m alembic check
-```
-
-`alembic check` must report `No new upgrade operations detected.`
-
-7. Rebuild and test the application through Docker:
-
-```powershell
-docker compose up -d --build eportfolio
-docker compose logs -f eportfolio
-```
-
-8. Commit the schema and its migration together:
-
-```powershell
-git add schemas/User.py migrations/versions/
-git commit -m "feat(database): add user bio"
-```
-
-A migration is required for tables, columns, SQL types, nullability, database
-defaults, unique constraints, indexes, foreign keys, and check constraints. It
-is not required for route logic, templates, CSS, or application-only validation
-rules.
-
-Never edit an already merged and applied migration to represent a later schema
-change. Create a new migration instead. Never test a destructive downgrade on
-the shared development or production database.
-
----
+Because `create_all` never drops anything, removing a field from a model leaves
+its column in place, holding data nothing reads any more. Drop it explicitly
+when that matters.
 
 ## Automated Deployment
 
@@ -887,9 +927,9 @@ echo "DEPLOY DONE $(date)"
 
 ## Notes
 
-* PostgreSQL and SQLite schemas are upgraded through Alembic when the application starts.
+* Missing tables are created at startup; altering an existing table is a deliberate manual step, since the project has no migration framework.
 * Demonstration data is enabled by default only outside production and is controlled by `SEED_DEMO_DATA`.
-* Authentication relies on JWT tokens stored in HTTP-only cookies and all state-changing forms use CSRF tokens.
+* Authentication relies on a JWT sent as an `Authorization: Bearer` header, so no credential is attached to a cross-site request.
 * Passwords are hashed before storage using Argon2.
-* Pagination is implemented on the public homepage and search results.
+* Pagination is implemented on the public directory and its search results.
 * Docker is used for production deployment.
