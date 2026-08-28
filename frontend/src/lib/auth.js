@@ -1,14 +1,18 @@
 import { api } from './api.js'
-import { saveSession, clearSession, isAuthenticated } from './session.js'
+import { saveCurrentUser, clearSession, isAuthenticated } from './session.js'
 
+/**
+ * Logging in returns the profile; the credential itself never reaches this
+ * code, because the server sends it as an HTTP-only cookie.
+ */
 export async function login(mail, password) {
-  const data = await api.post('/login', { mail, password }, { auth: false })
-  saveSession(data.token, data.user)
-  return data.user
+  const user = await api.post('/login', { mail, password }, { auth: false })
+  saveCurrentUser(user)
+  return user
 }
 
 /**
- * The signup endpoint only creates the account, it does not return a token,
+ * The signup endpoint only creates the account, it does not open a session,
  * so we log the new user straight in to avoid making them type it all again.
  */
 export async function signup(account) {
@@ -16,12 +20,15 @@ export async function signup(account) {
   return login(account.mail, account.password)
 }
 
+/**
+ * Only the server can end the session, since the cookie carrying it is out of
+ * reach of this code. If the call fails the visitor still leaves the app, but
+ * their session is genuinely still open — hence the reload rather than a
+ * silent client-side "logout".
+ */
 export async function logout() {
   try {
     await api.post('/logout')
-  } catch {
-    // A failing logout call must not trap the user in the app: the token is
-    // dropped client-side either way.
   } finally {
     clearSession()
     window.location.href = '/login.html'

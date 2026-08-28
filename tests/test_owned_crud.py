@@ -45,8 +45,7 @@ EXPERIENCE_RESOURCE = pytest.param(
         "date_start": datetime(2019, 1, 1),
         "date_end": datetime(2019, 12, 31),
     },
-    id="experiences",
-)
+    id="experiences")
 
 EDUCATION_RESOURCE = pytest.param(
     "/api/educations",
@@ -73,8 +72,7 @@ EDUCATION_RESOURCE = pytest.param(
         "date_start": datetime(2014, 9, 1),
         "date_end": datetime(2018, 6, 30),
     },
-    id="educations",
-)
+    id="educations")
 
 RESOURCES = (EXPERIENCE_RESOURCE, EDUCATION_RESOURCE)
 
@@ -86,8 +84,7 @@ def _store_record(
     session: Session,
     model: type[SQLModel],
     stored_fields: dict[str, Any],
-    owner: User,
-) -> SQLModel:
+    owner: User) -> SQLModel:
     """Persist one record directly, bypassing the routes under test."""
     record = model(**stored_fields, user_id=owner.id)
     session.add(record)
@@ -104,8 +101,7 @@ def test_every_route_rejects_an_anonymous_request(
     display_attribute: str,
     create_payload: dict[str, str],
     update_payload: dict[str, str],
-    stored_fields: dict[str, Any],
-) -> None:
+    stored_fields: dict[str, Any]) -> None:
     responses = {
         "list": client.get(endpoint),
         "create": client.post(endpoint, json=create_payload),
@@ -126,28 +122,26 @@ def test_owner_can_create_list_update_and_delete_a_record(
     client: TestClient,
     session: Session,
     user_factory: Callable[..., User],
-    access_token: Callable[..., str],
-    bearer: Callable[[str], dict[str, str]],
+    login_as: Callable[..., dict],
     endpoint: str,
     model: type[SQLModel],
     display_attribute: str,
     create_payload: dict[str, str],
     update_payload: dict[str, str],
-    stored_fields: dict[str, Any],
-) -> None:
+    stored_fields: dict[str, Any]) -> None:
     owner = user_factory(mail="owner@example.com")
-    headers = bearer(access_token(owner.mail))
+    login_as(owner.mail)
 
-    created = client.post(endpoint, json=create_payload, headers=headers)
+    created = client.post(endpoint, json=create_payload)
     assert created.status_code == 201
     record_id = created.json()["id"]
     assert created.json()[display_attribute] == create_payload[display_attribute]
 
-    listed = client.get(endpoint, headers=headers)
+    listed = client.get(endpoint)
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()] == [record_id]
 
-    updated = client.put(f"{endpoint}/{record_id}", json=update_payload, headers=headers)
+    updated = client.put(f"{endpoint}/{record_id}", json=update_payload)
     assert updated.status_code == 200
     assert updated.json()[display_attribute] == update_payload[display_attribute]
 
@@ -157,7 +151,7 @@ def test_owner_can_create_list_update_and_delete_a_record(
         update_payload[display_attribute]
     )
 
-    deleted = client.delete(f"{endpoint}/{record_id}", headers=headers)
+    deleted = client.delete(f"{endpoint}/{record_id}")
     assert deleted.status_code == 204
 
     session.expire_all()
@@ -169,26 +163,22 @@ def test_creation_owns_the_record_regardless_of_a_submitted_user_id(
     client: TestClient,
     session: Session,
     user_factory: Callable[..., User],
-    access_token: Callable[..., str],
-    bearer: Callable[[str], dict[str, str]],
+    login_as: Callable[..., dict],
     endpoint: str,
     model: type[SQLModel],
     display_attribute: str,
     create_payload: dict[str, str],
     update_payload: dict[str, str],
-    stored_fields: dict[str, Any],
-) -> None:
+    stored_fields: dict[str, Any]) -> None:
     owner = user_factory(mail="owner@example.com")
     victim = user_factory(mail="victim@example.com")
-    headers = bearer(access_token(owner.mail))
+    login_as(owner.mail)
 
     # Ownership comes from the verified token; a user_id in the body is not
     # part of the request model and cannot redirect the record to someone else.
     created = client.post(
         endpoint,
-        json={**create_payload, "user_id": victim.id},
-        headers=headers,
-    )
+        json={**create_payload, "user_id": victim.id})
 
     assert created.status_code == 201
     stored = session.get(model, created.json()["id"])
@@ -200,24 +190,22 @@ def test_another_user_cannot_update_or_delete_an_owned_record(
     client: TestClient,
     session: Session,
     user_factory: Callable[..., User],
-    access_token: Callable[..., str],
-    bearer: Callable[[str], dict[str, str]],
+    login_as: Callable[..., dict],
     endpoint: str,
     model: type[SQLModel],
     display_attribute: str,
     create_payload: dict[str, str],
     update_payload: dict[str, str],
-    stored_fields: dict[str, Any],
-) -> None:
+    stored_fields: dict[str, Any]) -> None:
     owner = user_factory(mail="owner@example.com")
     intruder = user_factory(mail="intruder@example.com")
     record = _store_record(session, model, stored_fields, owner)
     original_value = getattr(record, display_attribute)
 
-    headers = bearer(access_token(intruder.mail))
+    login_as(intruder.mail)
 
-    updated = client.put(f"{endpoint}/{record.id}", json=update_payload, headers=headers)
-    deleted = client.delete(f"{endpoint}/{record.id}", headers=headers)
+    updated = client.put(f"{endpoint}/{record.id}", json=update_payload)
+    deleted = client.delete(f"{endpoint}/{record.id}")
 
     # A foreign record answers exactly like a missing one, so its existence is
     # never revealed.
@@ -235,20 +223,19 @@ def test_listing_excludes_records_owned_by_someone_else(
     client: TestClient,
     session: Session,
     user_factory: Callable[..., User],
-    access_token: Callable[..., str],
-    bearer: Callable[[str], dict[str, str]],
+    login_as: Callable[..., dict],
     endpoint: str,
     model: type[SQLModel],
     display_attribute: str,
     create_payload: dict[str, str],
     update_payload: dict[str, str],
-    stored_fields: dict[str, Any],
-) -> None:
+    stored_fields: dict[str, Any]) -> None:
     owner = user_factory(mail="owner@example.com")
     other_user = user_factory(mail="other@example.com")
     _store_record(session, model, stored_fields, other_user)
 
-    listed = client.get(endpoint, headers=bearer(access_token(owner.mail)))
+    login_as(owner.mail)
+    listed = client.get(endpoint)
 
     assert listed.status_code == 200
     assert listed.json() == []
@@ -259,27 +246,23 @@ def test_a_reversed_period_is_refused_without_storing_anything(
     client: TestClient,
     session: Session,
     user_factory: Callable[..., User],
-    access_token: Callable[..., str],
-    bearer: Callable[[str], dict[str, str]],
+    login_as: Callable[..., dict],
     endpoint: str,
     model: type[SQLModel],
     display_attribute: str,
     create_payload: dict[str, str],
     update_payload: dict[str, str],
-    stored_fields: dict[str, Any],
-) -> None:
+    stored_fields: dict[str, Any]) -> None:
     owner = user_factory(mail="owner@example.com")
-    headers = bearer(access_token(owner.mail))
+    login_as(owner.mail)
 
     response = client.post(
         endpoint,
-        json={**create_payload, "date_start": "2021-01-01", "date_end": "2020-01-01"},
-        headers=headers,
-    )
+        json={**create_payload, "date_start": "2021-01-01", "date_end": "2020-01-01"})
 
     assert response.status_code == 400
     assert "End date" in response.json()["error"]
-    assert client.get(endpoint, headers=headers).json() == []
+    assert client.get(endpoint).json() == []
 
 
 @pytest.mark.parametrize(RESOURCE_ARGS, RESOURCES)
@@ -287,27 +270,23 @@ def test_editing_applies_the_same_rules_as_creation(
     client: TestClient,
     session: Session,
     user_factory: Callable[..., User],
-    access_token: Callable[..., str],
-    bearer: Callable[[str], dict[str, str]],
+    login_as: Callable[..., dict],
     endpoint: str,
     model: type[SQLModel],
     display_attribute: str,
     create_payload: dict[str, str],
     update_payload: dict[str, str],
-    stored_fields: dict[str, Any],
-) -> None:
+    stored_fields: dict[str, Any]) -> None:
     owner = user_factory(mail="owner@example.com")
     record = _store_record(session, model, stored_fields, owner)
     original_value = getattr(record, display_attribute)
 
-    headers = bearer(access_token(owner.mail))
+    login_as(owner.mail)
 
     # An edit must not be able to persist a value creation would have refused.
     response = client.put(
         f"{endpoint}/{record.id}",
-        json={**update_payload, display_attribute: "   "},
-        headers=headers,
-    )
+        json={**update_payload, display_attribute: "   "})
 
     assert response.status_code == 400
 

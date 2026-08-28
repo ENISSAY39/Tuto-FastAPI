@@ -101,13 +101,6 @@ class EducationOut(BaseModel):
     date_end: date
 
 
-class AuthenticatedUser(BaseModel):
-    """Answer to a successful login: the token plus who it belongs to."""
-
-    token: str
-    user: UserProfile
-
-
 class PortfolioDetail(BaseModel):
     """A complete portfolio: its owner and both owned collections."""
 

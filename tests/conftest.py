@@ -22,6 +22,7 @@ from sqlalchemy import URL, Engine  # noqa: E402
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
 
 import main as main_module  # noqa: E402
+from core.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME  # noqa: E402
 from core.database import get_session  # noqa: E402
 from core.security import hash_password  # noqa: E402
 from main import app  # noqa: E402
@@ -73,6 +74,13 @@ def client(
 
     try:
         with TestClient(app, base_url="http://testserver") as test_client:
+            # A browser reads the CSRF cookie and echoes it in a header on every
+            # mutating request. The client does the same once here, so tests can
+            # focus on what they are actually asserting; the tests that check the
+            # protection itself remove the header again.
+            test_client.get("/api/health")
+            test_client.headers[CSRF_HEADER_NAME] = test_client.cookies[CSRF_COOKIE_NAME]
+
             yield test_client
     finally:
         app.dependency_overrides.pop(get_session, None)
@@ -108,30 +116,21 @@ def user_factory(session: Session) -> Callable[..., User]:
 
 
 @pytest.fixture
-def access_token(client: TestClient) -> Callable[..., str]:
-    """Return a helper that logs in through the real route and yields its token.
+def login_as(client: TestClient) -> Callable[..., dict]:
+    """Log in through the real route, leaving the session cookies on the client.
 
-    Obtaining the credential the way the browser does keeps these tests honest:
-    a change that breaks login breaks every authenticated test with it, instead
-    of being hidden behind a hand-signed token.
+    Opening the session the way the browser does keeps these tests honest: a
+    change that breaks login breaks every authenticated test with it, instead
+    of being hidden behind a hand-signed token. Calling it again switches the
+    client to another account, because the new cookies replace the old ones.
     """
 
-    def login(mail: str, password: str = DEFAULT_PASSWORD) -> str:
+    def login(mail: str, password: str = DEFAULT_PASSWORD) -> dict:
         response = client.post("/api/login", json={"mail": mail, "password": password})
         assert response.status_code == 200
-        return response.json()["token"]
+        return response.json()
 
     return login
-
-
-@pytest.fixture
-def bearer() -> Callable[[str], dict[str, str]]:
-    """Return a helper building the Authorization header for one token."""
-
-    def header(token: str) -> dict[str, str]:
-        return {"Authorization": f"Bearer {token}"}
-
-    return header
 
 
 @pytest.fixture
@@ -144,8 +143,8 @@ def registered_user(user_factory: Callable[..., User]) -> User:
 def authenticated_client(
     client: TestClient,
     registered_user: User,
-    access_token: Callable[..., str],
+    login_as: Callable[..., dict],
 ) -> TestClient:
-    """Return a client sending a valid Bearer credential on every request."""
-    client.headers["Authorization"] = f"Bearer {access_token(registered_user.mail)}"
+    """Return a client carrying a valid session cookie."""
+    login_as(registered_user.mail)
     return client

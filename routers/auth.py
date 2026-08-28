@@ -1,17 +1,18 @@
 """Routes JSON de decouverte publique et d'authentification."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import func
 from sqlmodel import select
 
+from core.authentication import clear_session_cookies, set_session_cookies
 from core.database import SessionDep
 from core.security import create_access_token, verify_password
 from core.validation import normalize_email
 from routers.user import build_user_profile
 from schemas.api import (
-    AuthenticatedUser,
     LoginRequest,
     PortfolioPage,
+    UserProfile,
     UserSummary,
 )
 from schemas.User import User
@@ -90,9 +91,13 @@ def list_portfolios(
     )
 
 
-@router.post("/login", response_model=AuthenticatedUser)
-def login(payload: LoginRequest, session: SessionDep):
-    """Authentifie un compte et renvoie son jeton d'acces signe."""
+@router.post("/login", response_model=UserProfile)
+def login(payload: LoginRequest, response: Response, session: SessionDep):
+    """Authentifie un compte et ouvre sa session navigateur.
+
+    Le jeton n'apparait pas dans le corps de la reponse : il part uniquement
+    dans un cookie HTTP-only, hors de portee des scripts de la page.
+    """
 
     # La normalisation rend la recherche insensible aux espaces et a la casse.
     try:
@@ -114,17 +119,18 @@ def login(payload: LoginRequest, session: SessionDep):
     # L'adresse stockee devient le sujet du JWT et permettra de recharger le
     # compte a chaque requete protegee.
     token = create_access_token(data={"sub": user.mail})
+    set_session_cookies(response, token)
 
-    return AuthenticatedUser(token=token, user=build_user_profile(user))
+    return build_user_profile(user)
 
 
 @router.post("/logout")
-def logout():
-    """Accuse reception d'une deconnexion.
+def logout(response: Response):
+    """Ferme la session en supprimant les cookies qui la portent.
 
-    Le serveur ne conserve aucun etat de session : c'est le client qui efface
-    son jeton. La route existe pour que l'interface dispose d'un point d'appel
-    unique si une revocation cote serveur est ajoutee plus tard.
+    Le jeton etant hors de portee des scripts, seule cette route peut mettre
+    fin a une session : l'interface ne peut pas le faire elle-meme.
     """
 
+    clear_session_cookies(response)
     return {"status": "logged out"}

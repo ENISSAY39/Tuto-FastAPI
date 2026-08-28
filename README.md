@@ -41,7 +41,8 @@ The interface is a **multi-page application**: each screen is its own HTML docum
 
 ### Security
 
-* JWT Authentication (Bearer token)
+* JWT Authentication in an HTTP-only cookie
+* Double-submit CSRF protection on every mutation
 * Argon2 Password Hashing
 * Server-side ownership checks on every record
 
@@ -124,7 +125,16 @@ The interface is a **multi-page application**: each screen is its own HTML docum
 ### API
 
 Every endpoint answers JSON, and reports a failure as `{"error": "..."}`.
-Protected endpoints expect an `Authorization: Bearer <token>` header.
+Authentication rides on cookies the browser attaches by itself. Logging in
+sets an **HTTP-only** cookie holding the JWT, so no script on the page can read
+the credential, and a second, script-readable cookie that only says a session
+exists.
+
+Because the browser sends those cookies on cross-site requests too, every
+state-changing method (`POST`, `PUT`, `DELETE`) must also carry the CSRF token
+in an `X-CSRF-Token` header, matching the `csrf_token` cookie. A cross-site
+caller can neither read that cookie nor set a custom header, so it cannot
+produce the pair.
 
 | Method   | Endpoint                  | Auth | Description                          |
 | -------- | ------------------------- | ---- | ------------------------------------ |
@@ -214,7 +224,8 @@ Relationship rules:
 ```text
 .
 ├── core/
-│   ├── authentication.py     # Bearer token -> User, CurrentUser dependency
+│   ├── authentication.py     # session cookies, CurrentUser dependency
+│   ├── csrf.py               # double-submit token for mutating requests
 │   ├── config.py             # validated environment settings
 │   ├── database.py           # engine, schema creation, session dependency
 │   ├── security.py           # Argon2 hashing, JWT signing
@@ -929,7 +940,7 @@ echo "DEPLOY DONE $(date)"
 
 * Missing tables are created at startup; altering an existing table is a deliberate manual step, since the project has no migration framework.
 * Demonstration data is enabled by default only outside production and is controlled by `SEED_DEMO_DATA`.
-* Authentication relies on a JWT sent as an `Authorization: Bearer` header, so no credential is attached to a cross-site request.
+* Authentication relies on a JWT in an HTTP-only cookie, out of reach of page scripts, paired with a double-submit CSRF token on every mutation.
 * Passwords are hashed before storage using Argon2.
 * Pagination is implemented on the public directory and its search results.
 * Docker is used for production deployment.

@@ -1,9 +1,9 @@
 """Create and configure the FastAPI e-portfolio application.
 
 This module is deliberately limited to application wiring: the database schema
-and optional demo data are prepared during startup, error responses are given
-one uniform JSON shape, the JSON routers are registered, and the compiled
-frontend is served when it has been built.
+and optional demo data are prepared during startup, CSRF protection is
+installed, error responses are given one uniform JSON shape, the JSON routers
+are registered, and the compiled frontend is served when it has been built.
 """
 
 from contextlib import asynccontextmanager
@@ -16,6 +16,13 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from core.config import settings
+from core.csrf import (
+    CSRF_COOKIE_NAME,
+    SAFE_METHODS,
+    get_or_create_csrf_token,
+    set_csrf_cookie,
+    validate_csrf_token,
+)
 from core.database import SessionDep, create_db_and_tables
 from routers import auth, education, experience, user
 from seed import seed
@@ -48,6 +55,34 @@ async def lifespan(app: FastAPI):
 # Passing the lifespan explicitly makes startup preparation part of FastAPI's
 # supported lifecycle rather than relying on deprecated startup events.
 app = FastAPI(title="e-portfolio", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def csrf_middleware(request: Request, call_next):
+    """Issue the CSRF token, and require it on every state-changing request.
+
+    Guarding here rather than route by route means a new mutating endpoint is
+    protected the moment it is registered, instead of the day someone remembers
+    to add the check.
+
+    Errors raised inside middleware bypass the exception handlers below, so the
+    rejection is built by hand to keep the one error shape the client expects.
+    """
+    csrf_token = get_or_create_csrf_token(request)
+
+    if request.method not in SAFE_METHODS:
+        try:
+            validate_csrf_token(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+
+    response = await call_next(request)
+
+    # Only emit Set-Cookie when the client has no token (or sent an invalid
+    # one) so normal requests do not keep refreshing the cookie lifetime.
+    if request.cookies.get(CSRF_COOKIE_NAME) != csrf_token:
+        set_csrf_cookie(response, csrf_token)
+    return response
 
 
 @app.exception_handler(HTTPException)

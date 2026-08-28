@@ -1,23 +1,23 @@
+import { readCookie } from './cookies.js'
+
 /**
- * Session storage.
+ * Session state, as seen from the browser.
  *
- * The JWT lives in localStorage and is attached automatically by the API
- * client, so nothing token-related is ever shown in the UI.
+ * The access token is NOT here: it lives in an HTTP-only cookie that scripts
+ * cannot read, so a script injection on the page cannot carry the credential
+ * away. What this module keeps is the cached profile — a name and an email,
+ * used to draw the header without waiting for a request — and a way to ask
+ * whether a session is currently open.
  *
- * Every access is wrapped: localStorage throws in private-mode / blocked-cookie
- * setups, and a storage failure must never take the whole page down.
+ * Every localStorage access is wrapped: it throws in private-mode /
+ * blocked-cookie setups, and a storage failure must never take the page down.
  */
 
-const TOKEN_KEY = 'eportfolio.token'
 const USER_KEY = 'eportfolio.user'
 
-export function getToken() {
-  try {
-    return window.localStorage.getItem(TOKEN_KEY)
-  } catch {
-    return null
-  }
-}
+// Set alongside the credential, and expiring with it. It grants nothing:
+// forging it only produces a request the API answers with 401.
+const SESSION_HINT_COOKIE = 'signed_in'
 
 export function getCurrentUser() {
   try {
@@ -28,33 +28,29 @@ export function getCurrentUser() {
   }
 }
 
-export function saveSession(token, user) {
-  try {
-    window.localStorage.setItem(TOKEN_KEY, token)
-    window.localStorage.setItem(USER_KEY, JSON.stringify(user ?? null))
-  } catch {
-    /* session simply won't survive a reload — not worth crashing over */
-  }
-}
-
-/** Refresh the cached profile after the user edits it, keeping the token. */
+/** Cache the profile the header displays, after login or after an edit. */
 export function saveCurrentUser(user) {
   try {
     window.localStorage.setItem(USER_KEY, JSON.stringify(user ?? null))
   } catch {
-    /* ignore */
+    /* the header will simply fall back to no profile — not worth crashing over */
   }
 }
 
 export function clearSession() {
   try {
-    window.localStorage.removeItem(TOKEN_KEY)
     window.localStorage.removeItem(USER_KEY)
   } catch {
     /* ignore */
   }
 }
 
+/**
+ * Whether a session is open, answered synchronously so a page guard can run
+ * before React mounts. It reflects the hint cookie, which the server expires
+ * at the same moment as the token — so this cannot claim a session outlived
+ * the credential behind it.
+ */
 export function isAuthenticated() {
-  return Boolean(getToken())
+  return readCookie(SESSION_HINT_COOKIE) === '1'
 }
