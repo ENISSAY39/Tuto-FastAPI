@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens. Tailwind v4 turns every entry here into utilities, so
+   --color-surface-900 is usable as bg-surface-900 / text-surface-900 / etc.
+
+   The palette is light: paper-coloured surfaces, ink-coloured text, one teal
+   accent. Two scales carry it, and components should reach for those rather
+   than for a raw Tailwind colour, so the whole theme stays swappable from this
+   block alone.
+--------------------------------------------------------------------------- */
+@theme {
+  /* Surfaces, ordered from the page backdrop forward to the raised fills. */
+  --color-surface-950: #f7f6f3;
+  --color-surface-900: #ffffff;
+  --color-surface-850: #f4f2ee;
+  --color-surface-800: #eeece7;
+  --color-surface-700: #e5e2db;
+  --color-surface-600: #d6d2c9;
+
+  /* Ink: the text scale, and the source of every border and hover wash.
+     900 is a heading, 700 body copy, 500 a muted line, 400 a faint one. */
+  --color-ink-900: #1c1917;
+  --color-ink-700: #3f3b35;
+  --color-ink-500: #6b6459;
+  --color-ink-400: #918a7e;
+
+  /* Accent: a teal ramp. 600 is the brand step — it is the one that carries
+     enough contrast against paper to be used for text and for buttons. The
+     lighter steps are for tinted fills, never for type. */
+  --color-accent-300: #99f6e4;
+  --color-accent-400: #2dd4bf;
+  --color-accent-500: #14b8a6;
+  --color-accent-600: #0f766e;
+  --color-accent-700: #115e59;
+  --color-accent-800: #134e4a;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    min-height: 100vh;
+    background-color: var(--color-surface-950);
+    /* Two faint accent washes keep the paper from reading as flat grey. They
+       stay well under 10% so body text never loses contrast over them. */
+    background-image:
+      radial-gradient(60rem 40rem at 15% -10%, rgba(15, 118, 110, 0.07), transparent 60%),
+      radial-gradient(50rem 35rem at 110% 0%, rgba(20, 184, 166, 0.05), transparent 55%);
+    background-attachment: fixed;
+    color: var(--color-ink-700);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: rgba(15, 118, 110, 0.18);
+  }
+
+  /* Keyboard focus stays visible everywhere, mouse clicks stay clean. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-600);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-surface-950);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-surface-600);
+    border-radius: 9999px;
+    border: 2px solid var(--color-surface-950);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-400);
+  }
+}
+
+@layer utilities {
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.18s ease-out both;
+  }
+
+  @keyframes overlay-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .animate-overlay-in {
+    animation: overlay-in 0.15s ease-out both;
+  }
+}

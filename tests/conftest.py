@@ -18,11 +18,11 @@ os.environ["SEED_DEMO_DATA"] = "false"
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
 from fastapi.testclient import TestClient  # noqa: E402
-from httpx import Response  # noqa: E402
 from sqlalchemy import URL, Engine  # noqa: E402
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
 
 import main as main_module  # noqa: E402
+from core.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME  # noqa: E402
 from core.database import get_session  # noqa: E402
 from core.security import hash_password  # noqa: E402
 from main import app  # noqa: E402
@@ -67,13 +67,20 @@ def client(
             yield request_session
 
     # Entering TestClient runs the application lifespan.  Patch both startup
-    # actions so it cannot migrate or seed the developer's configured database.
-    monkeypatch.setattr(main_module, "run_database_migrations", lambda: None)
+    # actions so it cannot touch or seed the developer's configured database.
+    monkeypatch.setattr(main_module, "create_db_and_tables", lambda: None)
     monkeypatch.setattr(main_module, "seed", lambda: None)
     app.dependency_overrides[get_session] = override_get_session
 
     try:
         with TestClient(app, base_url="http://testserver") as test_client:
+            # A browser reads the CSRF cookie and echoes it in a header on every
+            # mutating request. The client does the same once here, so tests can
+            # focus on what they are actually asserting; the tests that check the
+            # protection itself remove the header again.
+            test_client.get("/api/health")
+            test_client.headers[CSRF_HEADER_NAME] = test_client.cookies[CSRF_COOKIE_NAME]
+
             yield test_client
     finally:
         app.dependency_overrides.pop(get_session, None)
@@ -109,38 +116,19 @@ def user_factory(session: Session) -> Callable[..., User]:
 
 
 @pytest.fixture
-def csrf_token(client: TestClient) -> Callable[[str], str]:
-    """Return a helper that obtains the CSRF cookie associated with a form."""
+def login_as(client: TestClient) -> Callable[..., dict]:
+    """Log in through the real route, leaving the session cookies on the client.
 
-    def get_token(path: str = "/login") -> str:
-        response = client.get(path)
+    Opening the session the way the browser does keeps these tests honest: a
+    change that breaks login breaks every authenticated test with it, instead
+    of being hidden behind a hand-signed token. Calling it again switches the
+    client to another account, because the new cookies replace the old ones.
+    """
+
+    def login(mail: str, password: str = DEFAULT_PASSWORD) -> dict:
+        response = client.post("/api/login", json={"mail": mail, "password": password})
         assert response.status_code == 200
-        token = client.cookies.get("csrf_token")
-        assert token is not None
-        return token
-
-    return get_token
-
-
-@pytest.fixture
-def login_user(
-    client: TestClient,
-    csrf_token: Callable[[str], str],
-) -> Callable[..., Response]:
-    """Return a helper that submits the real login form with a valid CSRF token."""
-
-    def login(
-        mail: str,
-        password: str,
-        *,
-        follow_redirects: bool = False,
-    ) -> Response:
-        token = csrf_token("/login")
-        return client.post(
-            "/login",
-            data={"mail": mail, "password": password, "csrf_token": token},
-            follow_redirects=follow_redirects,
-        )
+        return response.json()
 
     return login
 
@@ -155,10 +143,8 @@ def registered_user(user_factory: Callable[..., User]) -> User:
 def authenticated_client(
     client: TestClient,
     registered_user: User,
-    login_user: Callable[..., Response],
+    login_as: Callable[..., dict],
 ) -> TestClient:
-    """Return a client carrying a valid access-token cookie."""
-    response = login_user(registered_user.mail, DEFAULT_PASSWORD)
-    assert response.status_code == 303
-    assert client.cookies.get("access_token") is not None
+    """Return a client carrying a valid session cookie."""
+    login_as(registered_user.mail)
     return client

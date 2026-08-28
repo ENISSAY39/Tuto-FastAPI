@@ -1,12 +1,11 @@
-"""Configure the database engine, migrations, and request-scoped sessions."""
+"""Configure the database engine, schema creation, and request-scoped sessions."""
 
 import os
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy import URL
-from sqlmodel import Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 
 def get_database_url():
@@ -48,28 +47,23 @@ if str(database_url).startswith("sqlite"):
 
 engine = create_engine(database_url, **engine_options)
 
-# Resolve Alembic configuration from the repository root even if this module is
-# imported after a caller changes the process working directory.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+def create_db_and_tables() -> None:
+    """Create every declared table that does not already exist.
 
-def run_database_migrations() -> None:
-    """Upgrade the configured database to the latest Alembic revision.
-
-    The already configured application engine is injected into Alembic so
-    startup cannot accidentally migrate a different database URL.
+    Importing the table modules is what registers them in
+    ``SQLModel.metadata``; the import lives inside the function so ordinary
+    session consumers do not pull the whole schema package merely by importing
+    this module. ``create_all`` only issues ``CREATE TABLE IF NOT EXISTS`` and
+    therefore never drops or alters an existing table.
     """
-    # Keep Alembic imports local: regular session consumers do not need to load
-    # migration tooling merely by importing this database module.
-    from alembic import command
-    from alembic.config import Config
+    # These imports are intentionally unused as Python values: defining the
+    # classes is what populates the metadata used just below.
+    from schemas.Education import Education  # noqa: F401
+    from schemas.Experiences import Experience  # noqa: F401
+    from schemas.User import User  # noqa: F401
 
-    config = Config(str(PROJECT_ROOT / "alembic.ini"))
-    with engine.begin() as connection:
-        # ``env.py`` detects this connection and avoids constructing a second
-        # engine, keeping the upgrade within this managed transaction context.
-        config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+    SQLModel.metadata.create_all(engine)
 
 
 def get_session():

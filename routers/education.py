@@ -1,233 +1,138 @@
-"""Routes protégées de création, consultation, modification et suppression de formations."""
+"""Routes JSON du CRUD des formations possedees par le compte authentifie."""
 
-from fastapi import APIRouter, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from sqlmodel import Session
+from fastapi import APIRouter, HTTPException, Response, status
+from sqlmodel import select
 
-from core.auth_guard import auth_guard
-from core.authentication import load_owned_record
-from core.csrf import validate_csrf_token
-from core.database import get_session
+from core.authentication import CurrentUser, load_owned_record
+from core.database import SessionDep
 from core.validation import clean_text, parse_date_range
+from routers.user import serialize_education
+from schemas.api import EducationOut, EducationRequest
 from schemas.Education import Education
 
-# Ce routeur expose les opérations CRUD des parcours de formation.
-router = APIRouter()
-
-# Le même template prend en charge la création et l'édition grâce à la valeur edu.
-templates = Jinja2Templates(directory="templates")
+router = APIRouter(prefix="/api/educations", tags=["educations"])
 
 
-@router.get("/profil/education", response_class=HTMLResponse)
-def show_form(
-    request: Request,
-    session: Session = Depends(get_session),
+def validate_education_payload(payload: EducationRequest):
+    """Normalise une saisie de formation ou repond 400 avec son message.
+
+    Les memes regles servent a la creation et a la modification, ce qui evite
+    qu'une edition puisse enregistrer une valeur qu'une creation aurait refusee.
+    """
+
+    try:
+        return (
+            clean_text(payload.school_name, "School name", 150),
+            clean_text(payload.major, "Major", 150),
+            clean_text(payload.description, "Description", 3000),
+            *parse_date_range(payload.date_start, payload.date_end),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+def load_own_education(session: SessionDep, education_id: int, user) -> Education:
+    """Charge une formation appartenant au compte courant, ou repond 404.
+
+    Un identifiant inconnu et un identifiant appartenant a quelqu'un d'autre
+    recoivent exactement la meme reponse : l'existence d'une ressource
+    etrangere n'est jamais revelee.
+    """
+
+    education = load_owned_record(session, Education, education_id, user)
+    if education is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This education entry does not exist.",
+        )
+    return education
+
+
+@router.get("", response_model=list[EducationOut])
+def list_educations(user: CurrentUser, session: SessionDep):
+    """Liste les formations du compte authentifie, de la plus recente."""
+
+    educations = session.exec(
+        select(Education)
+        .where(Education.user_id == user.id)
+        .order_by(Education.date_start.desc())
+    ).all()
+    return [serialize_education(item) for item in educations]
+
+
+@router.post("", response_model=EducationOut, status_code=status.HTTP_201_CREATED)
+def create_education(
+    payload: EducationRequest,
+    user: CurrentUser,
+    session: SessionDep,
 ):
-    """Affiche le formulaire vide de création d'une formation authentifiée."""
+    """Enregistre une nouvelle formation pour le compte authentifie."""
 
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
-
-    # edu=None place le template partagé en mode création et form_values initialise les champs.
-    return templates.TemplateResponse(
-        request,
-        "education.html",
-        {"request": request, "edu": None, "form_values": {}},
+    school_name, major, description, date_start, date_end = (
+        validate_education_payload(payload)
     )
 
-
-@router.post("/profil/education")
-def create_education(
-    request: Request,
-    csrf_token: str = Form(""),
-    school_name: str = Form(...),
-    date_start: str = Form(...),
-    date_end: str = Form(...),
-    description: str = Form(...),
-    major: str = Form(...),
-    session: Session = Depends(get_session),
-):
-    """Valide et enregistre une formation pour l'utilisateur authentifié."""
-
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
-
-    # La mutation n'est autorisée qu'avec le jeton CSRF associé au navigateur courant.
-    validate_csrf_token(request, csrf_token)
-
-    # La saisie brute est conservée uniquement pour réafficher le formulaire en cas d'erreur.
-    form_values = {
-        "school_name": school_name,
-        "date_start": date_start,
-        "date_end": date_end,
-        "description": description,
-        "major": major,
-    }
-
-    # Les textes sont nettoyés et bornés ; la plage vérifie le format et l'ordre des dates.
-    try:
-        cleaned_school_name = clean_text(school_name, "School", 150)
-        cleaned_description = clean_text(description, "Description", 3000)
-        cleaned_major = clean_text(major, "Major", 150)
-        parsed_start, parsed_end = parse_date_range(date_start, date_end)
-    except ValueError as exc:
-        # Le template reste en mode création et présente l'erreur de validation au client.
-        return templates.TemplateResponse(
-            request,
-            "education.html",
-            {
-                "request": request,
-                "edu": None,
-                "error": str(exc),
-                "form_values": form_values,
-            },
-            status_code=400,
-        )
-
-    # user_id provient exclusivement du compte authentifié et établit la propriété en base.
+    # user_id provient exclusivement du compte authentifie et etablit la
+    # propriete en base : une valeur envoyee par le client serait ignoree.
     education = Education(
-        school_name=cleaned_school_name,
-        date_start=parsed_start,
-        date_end=parsed_end,
-        description=cleaned_description,
-        major=cleaned_major,
+        school_name=school_name,
+        major=major,
+        description=description,
+        date_start=date_start,
+        date_end=date_end,
         user_id=user.id,
     )
 
-    # La session injectée regroupe l'insertion et sa validation dans la requête courante.
     session.add(education)
     session.commit()
+    session.refresh(education)
+    return serialize_education(education)
 
-    # Le code 303 évite de soumettre une seconde fois le formulaire lors d'une actualisation.
-    return RedirectResponse("/profil", status_code=303)
 
-
-@router.post("/profil/education/delete/{edu_id}")
-def delete_education(
-    request: Request,
-    edu_id: int,
-    csrf_token: str = Form(""),
-    session: Session = Depends(get_session),
+@router.put("/{education_id}", response_model=EducationOut)
+def update_education(
+    education_id: int,
+    payload: EducationRequest,
+    user: CurrentUser,
+    session: SessionDep,
 ):
-    """Supprime une formation uniquement si elle appartient au compte authentifié."""
+    """Met a jour une formation appartenant au compte authentifie."""
 
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
+    # L'identifiant de l'URL ne constitue jamais une preuve de propriete : la
+    # verification precede toute lecture des valeurs soumises.
+    education = load_own_education(session, education_id, user)
 
-    # Le contrôle CSRF précède le chargement de la ressource destinée à être supprimée.
-    validate_csrf_token(request, csrf_token)
-
-    # Vérification que l'éducation appartient bien à l'utilisateur authentifié avant suppression
-    edu = load_owned_record(session, Education, edu_id, user)
-    
-    if edu:
-        session.delete(edu)
-        session.commit()
-
-    # La réponse identique masque l'existence des ressources étrangères et applique PRG.
-    return RedirectResponse("/profil", status_code=303)
-
-
-@router.get("/profil/education/edit/{edu_id}", response_class=HTMLResponse)
-def edit_education_form(
-    request: Request,
-    edu_id: int,
-    session: Session = Depends(get_session),
-):
-    """Affiche le formulaire d'édition d'une formation possédée par le compte courant."""
-
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
-
-    # Vérification que l'éducation appartient bien à l'utilisateur authentifié avant édition
-    edu = load_owned_record(session, Education, edu_id, user)
-    
-    if not edu:
-        return RedirectResponse("/profil", status_code=303)
-
-    # edu active le mode édition du template ; les valeurs persistées préremplissent les champs.
-    return templates.TemplateResponse(
-        request,
-        "education.html",
-        {"request": request, "edu": edu, "form_values": {}},
+    school_name, major, description, date_start, date_end = (
+        validate_education_payload(payload)
     )
 
+    education.school_name = school_name
+    education.major = major
+    education.description = description
+    education.date_start = date_start
+    education.date_end = date_end
 
-@router.post("/profil/education/edit/{edu_id}")
-def update_education(
-    request: Request,
-    edu_id: int,
-    csrf_token: str = Form(""),
-    school_name: str = Form(...),
-    date_start: str = Form(...),
-    date_end: str = Form(...),
-    description: str = Form(...),
-    major: str = Form(...),
-    session: Session = Depends(get_session),
+    session.add(education)
+    session.commit()
+    session.refresh(education)
+    return serialize_education(education)
+
+
+@router.delete("/{education_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_education(
+    education_id: int,
+    user: CurrentUser,
+    session: SessionDep,
 ):
-    """Valide puis met à jour une formation appartenant au compte authentifié."""
+    """Supprime une formation appartenant au compte authentifie."""
 
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
+    education = load_own_education(session, education_id, user)
 
-    # Le jeton CSRF protège la requête POST contre une soumission depuis un site tiers.
-    validate_csrf_token(request, csrf_token)
-
-    # L'ID de l'enregistrement provient de l'URL et ne constitue jamais une preuve de propriété
-    edu = load_owned_record(session, Education, edu_id, user)
-    
-    if not edu:
-        return RedirectResponse("/profil", status_code=303)
-
-    # La saisie d'origine permet de ne pas effacer les champs après une validation refusée.
-    form_values = {
-        "school_name": school_name,
-        "date_start": date_start,
-        "date_end": date_end,
-        "description": description,
-        "major": major,
-    }
-
-    # Les mêmes règles qu'à la création maintiennent des données cohérentes après l'édition.
-    try:
-        cleaned_school_name = clean_text(school_name, "School", 150)
-        cleaned_description = clean_text(description, "Description", 3000)
-        cleaned_major = clean_text(major, "Major", 150)
-        parsed_start, parsed_end = parse_date_range(date_start, date_end)
-    except ValueError as exc:
-        # L'objet edu conserve le mode édition pendant que form_values restaure la saisie invalide.
-        return templates.TemplateResponse(
-            request,
-            "education.html",
-            {
-                "request": request,
-                "edu": edu,
-                "error": str(exc),
-                "form_values": form_values,
-            },
-            status_code=400,
-        )
-
-    # Les valeurs validées remplacent les champs de l'entité déjà suivie par la session.
-    edu.school_name = cleaned_school_name
-    edu.date_start = parsed_start
-    edu.date_end = parsed_end
-    edu.description = cleaned_description
-    edu.major = cleaned_major
-
-    # commit persiste toutes les modifications atomiquement dans la base configurée.
+    session.delete(education)
     session.commit()
 
-    # Le navigateur revient au profil par un GET distinct après la mise à jour.
-    return RedirectResponse("/profil", status_code=303)
+    # 204 interdit tout corps de reponse : le client se contente du statut.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

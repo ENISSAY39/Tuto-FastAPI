@@ -1,4 +1,11 @@
-"""Integration tests for authenticated, user-owned portfolio records."""
+"""Integration tests for the experience and education CRUD routes.
+
+Both resources enforce the same ownership contract, so every case below is
+parametrized over the two rather than written twice: a rule that stops holding
+for one of them fails here immediately.
+"""
+
+from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
@@ -6,238 +13,282 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlmodel import Session, SQLModel
 
-from core.security import create_access_token
 from schemas.Education import Education
 from schemas.Experiences import Experience
 from schemas.User import User
 
 
-PortfolioModel = type[Experience] | type[Education]
+EXPERIENCE_RESOURCE = pytest.param(
+    "/api/experiences",
+    Experience,
+    "title",
+    {
+        "title": "Backend intern",
+        "company": "Acme",
+        "description": "Built the reporting endpoints.",
+        "date_start": "2020-01-01",
+        "date_end": "2020-06-30",
+    },
+    {
+        "title": "Backend engineer",
+        "company": "Acme",
+        "description": "Owned the reporting service.",
+        "date_start": "2020-07-01",
+        "date_end": "2022-01-31",
+    },
+    {
+        "title": "Stored role",
+        "company": "Stored Company",
+        "description": "Stored description",
+        "date_start": datetime(2019, 1, 1),
+        "date_end": datetime(2019, 12, 31),
+    },
+    id="experiences")
+
+EDUCATION_RESOURCE = pytest.param(
+    "/api/educations",
+    Education,
+    "school_name",
+    {
+        "school_name": "EPF",
+        "major": "Computer Science",
+        "description": "Engineering degree.",
+        "date_start": "2015-09-01",
+        "date_end": "2019-06-30",
+    },
+    {
+        "school_name": "EPF Sceaux",
+        "major": "Software Engineering",
+        "description": "Engineering degree, software major.",
+        "date_start": "2015-09-01",
+        "date_end": "2020-06-30",
+    },
+    {
+        "school_name": "Stored University",
+        "major": "Stored Major",
+        "description": "Stored description",
+        "date_start": datetime(2014, 9, 1),
+        "date_end": datetime(2018, 6, 30),
+    },
+    id="educations")
+
+RESOURCES = (EXPERIENCE_RESOURCE, EDUCATION_RESOURCE)
+
+# Signature shared by every parametrized case below.
+RESOURCE_ARGS = "endpoint, model, display_attribute, create_payload, update_payload, stored_fields"
 
 
-RESOURCE_CASES = [
-    pytest.param(
-        Experience,
-        "experience",
-        {
-            "title": "  Backend developer  ",
-            "date_start": "2024-01-01",
-            "date_end": "2024-06-30",
-            "description": "  Built a FastAPI service.  ",
-            "company": "  Example Corp  ",
-        },
-        {
-            "title": "Senior backend developer",
-            "date_start": "2024-07-01",
-            "date_end": "2025-06-30",
-            "description": "Led the API team.",
-            "company": "New Example Corp",
-        },
-        "title",
-        "Backend developer",
-        "Senior backend developer",
-        id="experience",
-    ),
-    pytest.param(
-        Education,
-        "education",
-        {
-            "school_name": "  EPF Engineering School  ",
-            "date_start": "2022-09-01",
-            "date_end": "2025-06-30",
-            "description": "  Computer science curriculum.  ",
-            "major": "  Software engineering  ",
-        },
-        {
-            "school_name": "EPF Graduate School",
-            "date_start": "2022-09-01",
-            "date_end": "2026-06-30",
-            "description": "Extended computer science curriculum.",
-            "major": "Cloud engineering",
-        },
-        "school_name",
-        "EPF Engineering School",
-        "EPF Graduate School",
-        id="education",
-    ),
-]
+def _store_record(
+    session: Session,
+    model: type[SQLModel],
+    stored_fields: dict[str, Any],
+    owner: User) -> SQLModel:
+    """Persist one record directly, bypassing the routes under test."""
+    record = model(**stored_fields, user_id=owner.id)
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
 
 
-def authenticate(client: TestClient, mail: str) -> None:
-    """Authenticate the test browser as the user identified by ``mail``."""
-    client.cookies.set("access_token", create_access_token({"sub": mail}))
-
-
-@pytest.mark.parametrize("resource", ["experience", "education"])
-def test_owned_crud_pages_redirect_anonymous_users(
+@pytest.mark.parametrize(RESOURCE_ARGS, RESOURCES)
+def test_every_route_rejects_an_anonymous_request(
     client: TestClient,
-    resource: str,
-) -> None:
-    response = client.get(f"/profil/{resource}", follow_redirects=False)
+    endpoint: str,
+    model: type[SQLModel],
+    display_attribute: str,
+    create_payload: dict[str, str],
+    update_payload: dict[str, str],
+    stored_fields: dict[str, Any]) -> None:
+    responses = {
+        "list": client.get(endpoint),
+        "create": client.post(endpoint, json=create_payload),
+        "update": client.put(f"{endpoint}/1", json=update_payload),
+        "delete": client.delete(f"{endpoint}/1"),
+    }
 
-    assert response.status_code == 303
-    assert response.headers["location"] == "/login"
+    assert {name: response.status_code for name, response in responses.items()} == {
+        "list": 401,
+        "create": 401,
+        "update": 401,
+        "delete": 401,
+    }
 
 
-@pytest.mark.parametrize(
-    (
-        "model",
-        "resource",
-        "create_data",
-        "update_data",
-        "display_attribute",
-        "created_display_value",
-        "updated_display_value",
-    ),
-    RESOURCE_CASES,
-)
-def test_owner_can_create_update_and_delete_a_portfolio_record(
+@pytest.mark.parametrize(RESOURCE_ARGS, RESOURCES)
+def test_owner_can_create_list_update_and_delete_a_record(
     client: TestClient,
     session: Session,
     user_factory: Callable[..., User],
-    csrf_token: Callable[[str], str],
-    model: PortfolioModel,
-    resource: str,
-    create_data: dict[str, str],
-    update_data: dict[str, str],
+    login_as: Callable[..., dict],
+    endpoint: str,
+    model: type[SQLModel],
     display_attribute: str,
-    created_display_value: str,
-    updated_display_value: str,
-) -> None:
-    owner = user_factory(mail=f"owner-{resource}@example.com")
-    authenticate(client, owner.mail)
-    token = csrf_token(path=f"/profil/{resource}")
+    create_payload: dict[str, str],
+    update_payload: dict[str, str],
+    stored_fields: dict[str, Any]) -> None:
+    owner = user_factory(mail="owner@example.com")
+    login_as(owner.mail)
 
-    create_response = client.post(
-        f"/profil/{resource}",
-        data={"csrf_token": token, **create_data},
-        follow_redirects=False,
+    created = client.post(endpoint, json=create_payload)
+    assert created.status_code == 201
+    record_id = created.json()["id"]
+    assert created.json()[display_attribute] == create_payload[display_attribute]
+
+    listed = client.get(endpoint)
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [record_id]
+
+    updated = client.put(f"{endpoint}/{record_id}", json=update_payload)
+    assert updated.status_code == 200
+    assert updated.json()[display_attribute] == update_payload[display_attribute]
+
+    # The stored row, not just the response, must carry the new value.
+    session.expire_all()
+    assert getattr(session.get(model, record_id), display_attribute) == (
+        update_payload[display_attribute]
     )
 
-    assert create_response.status_code == 303
-    assert create_response.headers["location"] == "/profil"
-    records = session.exec(select(model)).all()
-    assert len(records) == 1
-    record = records[0]
-    assert record.user_id == owner.id
-    assert getattr(record, display_attribute) == created_display_value
+    deleted = client.delete(f"{endpoint}/{record_id}")
+    assert deleted.status_code == 204
 
-    update_response = client.post(
-        f"/profil/{resource}/edit/{record.id}",
-        data={"csrf_token": token, **update_data},
-        follow_redirects=False,
-    )
-
-    assert update_response.status_code == 303
-    session.refresh(record)
-    assert getattr(record, display_attribute) == updated_display_value
-
-    record_id = record.id
-    delete_response = client.post(
-        f"/profil/{resource}/delete/{record_id}",
-        data={"csrf_token": token},
-        follow_redirects=False,
-    )
-
-    assert delete_response.status_code == 303
     session.expire_all()
     assert session.get(model, record_id) is None
 
 
-@pytest.mark.parametrize(
-    (
-        "model",
-        "resource",
-        "form_data",
-        "display_attribute",
-        "original_display_value",
-        "record_fields",
-    ),
-    [
-        pytest.param(
-            Experience,
-            "experience",
-            {
-                "title": "Stolen experience",
-                "date_start": "2025-01-01",
-                "date_end": "2025-12-31",
-                "description": "Must not be persisted",
-                "company": "Attacker Corp",
-            },
-            "title",
-            "Owner experience",
-            {
-                "title": "Owner experience",
-                "date_start": datetime(2024, 1, 1),
-                "date_end": datetime(2024, 12, 31),
-                "description": "Private owner record",
-                "company": "Owner Corp",
-            },
-            id="experience",
-        ),
-        pytest.param(
-            Education,
-            "education",
-            {
-                "school_name": "Stolen education",
-                "date_start": "2025-01-01",
-                "date_end": "2025-12-31",
-                "description": "Must not be persisted",
-                "major": "Attacker major",
-            },
-            "school_name",
-            "Owner school",
-            {
-                "school_name": "Owner school",
-                "date_start": datetime(2021, 9, 1),
-                "date_end": datetime(2024, 6, 30),
-                "description": "Private owner record",
-                "major": "Owner major",
-            },
-            id="education",
-        ),
-    ],
-)
-def test_another_user_cannot_view_update_or_delete_owned_records(
+@pytest.mark.parametrize(RESOURCE_ARGS, RESOURCES)
+def test_creation_owns_the_record_regardless_of_a_submitted_user_id(
     client: TestClient,
     session: Session,
     user_factory: Callable[..., User],
-    csrf_token: Callable[[str], str],
-    model: PortfolioModel,
-    resource: str,
-    form_data: dict[str, str],
+    login_as: Callable[..., dict],
+    endpoint: str,
+    model: type[SQLModel],
     display_attribute: str,
-    original_display_value: str,
-    record_fields: dict[str, Any],
-) -> None:
-    owner = user_factory(mail=f"record-owner-{resource}@example.com")
-    attacker = user_factory(mail=f"attacker-{resource}@example.com")
-    record = model(**record_fields, user_id=owner.id)
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    record_id = record.id
+    create_payload: dict[str, str],
+    update_payload: dict[str, str],
+    stored_fields: dict[str, Any]) -> None:
+    owner = user_factory(mail="owner@example.com")
+    victim = user_factory(mail="victim@example.com")
+    login_as(owner.mail)
 
-    authenticate(client, attacker.mail)
-    token = csrf_token(path=f"/profil/{resource}")
+    # Ownership comes from the verified token; a user_id in the body is not
+    # part of the request model and cannot redirect the record to someone else.
+    created = client.post(
+        endpoint,
+        json={**create_payload, "user_id": victim.id})
 
-    update_response = client.post(
-        f"/profil/{resource}/edit/{record_id}",
-        data={"csrf_token": token, **form_data},
-        follow_redirects=False,
-    )
-    assert update_response.status_code == 303
-    assert update_response.headers["location"] == "/profil"
-    session.refresh(record)
-    assert getattr(record, display_attribute) == original_display_value
+    assert created.status_code == 201
+    stored = session.get(model, created.json()["id"])
+    assert stored.user_id == owner.id
 
-    delete_response = client.post(
-        f"/profil/{resource}/delete/{record_id}",
-        data={"csrf_token": token},
-        follow_redirects=False,
-    )
-    assert delete_response.status_code == 303
+
+@pytest.mark.parametrize(RESOURCE_ARGS, RESOURCES)
+def test_another_user_cannot_update_or_delete_an_owned_record(
+    client: TestClient,
+    session: Session,
+    user_factory: Callable[..., User],
+    login_as: Callable[..., dict],
+    endpoint: str,
+    model: type[SQLModel],
+    display_attribute: str,
+    create_payload: dict[str, str],
+    update_payload: dict[str, str],
+    stored_fields: dict[str, Any]) -> None:
+    owner = user_factory(mail="owner@example.com")
+    intruder = user_factory(mail="intruder@example.com")
+    record = _store_record(session, model, stored_fields, owner)
+    original_value = getattr(record, display_attribute)
+
+    login_as(intruder.mail)
+
+    updated = client.put(f"{endpoint}/{record.id}", json=update_payload)
+    deleted = client.delete(f"{endpoint}/{record.id}")
+
+    # A foreign record answers exactly like a missing one, so its existence is
+    # never revealed.
+    assert updated.status_code == 404
+    assert deleted.status_code == 404
+
     session.expire_all()
-    assert session.get(model, record_id) is not None
+    surviving = session.get(model, record.id)
+    assert surviving is not None
+    assert getattr(surviving, display_attribute) == original_value
+
+
+@pytest.mark.parametrize(RESOURCE_ARGS, RESOURCES)
+def test_listing_excludes_records_owned_by_someone_else(
+    client: TestClient,
+    session: Session,
+    user_factory: Callable[..., User],
+    login_as: Callable[..., dict],
+    endpoint: str,
+    model: type[SQLModel],
+    display_attribute: str,
+    create_payload: dict[str, str],
+    update_payload: dict[str, str],
+    stored_fields: dict[str, Any]) -> None:
+    owner = user_factory(mail="owner@example.com")
+    other_user = user_factory(mail="other@example.com")
+    _store_record(session, model, stored_fields, other_user)
+
+    login_as(owner.mail)
+    listed = client.get(endpoint)
+
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
+@pytest.mark.parametrize(RESOURCE_ARGS, RESOURCES)
+def test_a_reversed_period_is_refused_without_storing_anything(
+    client: TestClient,
+    session: Session,
+    user_factory: Callable[..., User],
+    login_as: Callable[..., dict],
+    endpoint: str,
+    model: type[SQLModel],
+    display_attribute: str,
+    create_payload: dict[str, str],
+    update_payload: dict[str, str],
+    stored_fields: dict[str, Any]) -> None:
+    owner = user_factory(mail="owner@example.com")
+    login_as(owner.mail)
+
+    response = client.post(
+        endpoint,
+        json={**create_payload, "date_start": "2021-01-01", "date_end": "2020-01-01"})
+
+    assert response.status_code == 400
+    assert "End date" in response.json()["error"]
+    assert client.get(endpoint).json() == []
+
+
+@pytest.mark.parametrize(RESOURCE_ARGS, RESOURCES)
+def test_editing_applies_the_same_rules_as_creation(
+    client: TestClient,
+    session: Session,
+    user_factory: Callable[..., User],
+    login_as: Callable[..., dict],
+    endpoint: str,
+    model: type[SQLModel],
+    display_attribute: str,
+    create_payload: dict[str, str],
+    update_payload: dict[str, str],
+    stored_fields: dict[str, Any]) -> None:
+    owner = user_factory(mail="owner@example.com")
+    record = _store_record(session, model, stored_fields, owner)
+    original_value = getattr(record, display_attribute)
+
+    login_as(owner.mail)
+
+    # An edit must not be able to persist a value creation would have refused.
+    response = client.put(
+        f"{endpoint}/{record.id}",
+        json={**update_payload, display_attribute: "   "})
+
+    assert response.status_code == 400
+
+    session.expire_all()
+    assert getattr(session.get(model, record.id), display_attribute) == original_value

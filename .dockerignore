@@ -7,3 +7,8 @@ e-portfolio-venv/
 .venv/
 env/
 database.db
+frontend/node_modules/
+frontend/dist/
+.pytest_cache/
+htmlcov/
+.coverage
