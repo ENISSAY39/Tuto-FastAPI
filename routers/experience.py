@@ -1,233 +1,138 @@
-"""Routes protégées de création, consultation, modification et suppression d'expériences."""
+"""Routes JSON du CRUD des experiences possedees par le compte authentifie."""
 
-from fastapi import APIRouter, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from sqlmodel import Session
+from fastapi import APIRouter, HTTPException, Response, status
+from sqlmodel import select
 
-from core.authentication import get_authenticated_user, load_owned_record
-from core.auth_guard import auth_guard
-from core.csrf import validate_csrf_token
-from core.database import get_session
+from core.authentication import CurrentUser, load_owned_record
+from core.database import SessionDep
 from core.validation import clean_text, parse_date_range
+from routers.user import serialize_experience
+from schemas.api import ExperienceOut, ExperienceRequest
 from schemas.Experiences import Experience
 
-# Ce routeur expose les opérations CRUD des expériences professionnelles.
-router = APIRouter()
-
-# Le même template prend en charge la création et l'édition grâce à la valeur exp.
-templates = Jinja2Templates(directory="templates")
+router = APIRouter(prefix="/api/experiences", tags=["experiences"])
 
 
-@router.get("/profil/experience", response_class=HTMLResponse)
-def show_experience_form(
-    request: Request,
-    session: Session = Depends(get_session),
+def validate_experience_payload(payload: ExperienceRequest):
+    """Normalise une saisie d'experience ou repond 400 avec son message.
+
+    Les memes regles servent a la creation et a la modification, ce qui evite
+    qu'une edition puisse enregistrer une valeur qu'une creation aurait refusee.
+    """
+
+    try:
+        return (
+            clean_text(payload.title, "Title", 150),
+            clean_text(payload.company, "Company", 150),
+            clean_text(payload.description, "Description", 3000),
+            *parse_date_range(payload.date_start, payload.date_end),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+def load_own_experience(session: SessionDep, experience_id: int, user) -> Experience:
+    """Charge une experience appartenant au compte courant, ou repond 404.
+
+    Un identifiant inconnu et un identifiant appartenant a quelqu'un d'autre
+    recoivent exactement la meme reponse : l'existence d'une ressource
+    etrangere n'est jamais revelee.
+    """
+
+    experience = load_owned_record(session, Experience, experience_id, user)
+    if experience is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This experience does not exist.",
+        )
+    return experience
+
+
+@router.get("", response_model=list[ExperienceOut])
+def list_experiences(user: CurrentUser, session: SessionDep):
+    """Liste les experiences du compte authentifie, de la plus recente."""
+
+    experiences = session.exec(
+        select(Experience)
+        .where(Experience.user_id == user.id)
+        .order_by(Experience.date_start.desc())
+    ).all()
+    return [serialize_experience(item) for item in experiences]
+
+
+@router.post("", response_model=ExperienceOut, status_code=status.HTTP_201_CREATED)
+def create_experience(
+    payload: ExperienceRequest,
+    user: CurrentUser,
+    session: SessionDep,
 ):
-    """Affiche le formulaire vide de création d'une expérience authentifiée."""
+    """Enregistre une nouvelle experience pour le compte authentifie."""
 
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
-
-    # exp=None place le template partagé en mode création et form_values initialise les champs.
-    return templates.TemplateResponse(
-        request,
-        "experience.html",
-        {"request": request, "exp": None, "form_values": {}},
+    title, company, description, date_start, date_end = validate_experience_payload(
+        payload
     )
 
-
-@router.post("/profil/experience")
-def create_experience(
-    request: Request,
-    csrf_token: str = Form(""),
-    title: str = Form(...),
-    date_start: str = Form(...),
-    date_end: str = Form(...),
-    description: str = Form(...),
-    company: str = Form(...),
-    session: Session = Depends(get_session),
-):
-    """Valide et enregistre une expérience pour l'utilisateur authentifié."""
-
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
-
-    # La mutation n'est autorisée qu'avec le jeton CSRF associé au navigateur courant.
-    validate_csrf_token(request, csrf_token)
-
-    # La saisie brute est conservée uniquement pour réafficher le formulaire en cas d'erreur.
-    form_values = {
-        "title": title,
-        "date_start": date_start,
-        "date_end": date_end,
-        "description": description,
-        "company": company,
-    }
-
-    # Les textes sont nettoyés et bornés ; la plage vérifie le format et l'ordre des dates.
-    try:
-        cleaned_title = clean_text(title, "Title", 150)
-        cleaned_description = clean_text(description, "Description", 3000)
-        cleaned_company = clean_text(company, "Company", 150)
-        parsed_start, parsed_end = parse_date_range(date_start, date_end)
-    except ValueError as exc:
-        # Le template reste en mode création et présente l'erreur de validation au client.
-        return templates.TemplateResponse(
-            request,
-            "experience.html",
-            {
-                "request": request,
-                "exp": None,
-                "error": str(exc),
-                "form_values": form_values,
-            },
-            status_code=400,
-        )
-
-    # user_id provient exclusivement du compte authentifié et établit la propriété en base.
+    # user_id provient exclusivement du compte authentifie et etablit la
+    # propriete en base : une valeur envoyee par le client serait ignoree.
     experience = Experience(
-        title=cleaned_title,
-        date_start=parsed_start,
-        date_end=parsed_end,
-        description=cleaned_description,
-        company=cleaned_company,
+        title=title,
+        company=company,
+        description=description,
+        date_start=date_start,
+        date_end=date_end,
         user_id=user.id,
     )
 
-    # La session injectée regroupe l'insertion et sa validation dans la requête courante.
     session.add(experience)
     session.commit()
+    session.refresh(experience)
+    return serialize_experience(experience)
 
-    # Le code 303 évite de soumettre une seconde fois le formulaire lors d'une actualisation.
-    return RedirectResponse("/profil", status_code=303)
 
-
-@router.post("/profil/experience/delete/{exp_id}")
-def delete_experience(
-    request: Request,
-    exp_id: int,
-    csrf_token: str = Form(""),
-    session: Session = Depends(get_session),
+@router.put("/{experience_id}", response_model=ExperienceOut)
+def update_experience(
+    experience_id: int,
+    payload: ExperienceRequest,
+    user: CurrentUser,
+    session: SessionDep,
 ):
-    """Supprime une expérience uniquement si elle appartient au compte authentifié."""
+    """Met a jour une experience appartenant au compte authentifie."""
 
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
+    # L'identifiant de l'URL ne constitue jamais une preuve de propriete : la
+    # verification precede toute lecture des valeurs soumises.
+    experience = load_own_experience(session, experience_id, user)
 
-    # Le contrôle CSRF précède le chargement de la ressource destinée à être supprimée.
-    validate_csrf_token(request, csrf_token)
-
-    # Vérification que l'expérience appartient bien à l'utilisateur authentifié avant suppression
-    exp = load_owned_record(session, Experience, exp_id, user)
-    
-    if exp:
-        session.delete(exp)
-        session.commit()
-
-    # La réponse identique masque l'existence des ressources étrangères et applique PRG.
-    return RedirectResponse("/profil", status_code=303)
-
-
-@router.get("/profil/experience/edit/{exp_id}", response_class=HTMLResponse)
-def edit_experience_form(
-    request: Request,
-    exp_id: int,
-    session: Session = Depends(get_session),
-):
-    """Affiche le formulaire d'édition d'une expérience possédée par le compte courant."""
-
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
-
-    # Vérification que l'expérience appartient bien à l'utilisateur authentifié avant édition
-    exp = load_owned_record(session, Experience, exp_id, user)
-    
-    if not exp:
-        return RedirectResponse("/profil", status_code=303)
-
-    # exp active le mode édition du template ; les valeurs persistées préremplissent les champs.
-    return templates.TemplateResponse(
-        request,
-        "experience.html",
-        {"request": request, "exp": exp, "form_values": {}},
+    title, company, description, date_start, date_end = validate_experience_payload(
+        payload
     )
 
+    experience.title = title
+    experience.company = company
+    experience.description = description
+    experience.date_start = date_start
+    experience.date_end = date_end
 
-@router.post("/profil/experience/edit/{exp_id}")
-def update_experience(
-    request: Request,
-    exp_id: int,
-    csrf_token: str = Form(""),
-    title: str = Form(...),
-    date_start: str = Form(...),
-    date_end: str = Form(...),
-    description: str = Form(...),
-    company: str = Form(...),
-    session: Session = Depends(get_session),
+    session.add(experience)
+    session.commit()
+    session.refresh(experience)
+    return serialize_experience(experience)
+
+
+@router.delete("/{experience_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_experience(
+    experience_id: int,
+    user: CurrentUser,
+    session: SessionDep,
 ):
-    """Valide puis met à jour une expérience appartenant au compte authentifié."""
+    """Supprime une experience appartenant au compte authentifie."""
 
-    auth_result = auth_guard(request, session)
-    if isinstance(auth_result, RedirectResponse):
-        return auth_result
-    user = auth_result
+    experience = load_own_experience(session, experience_id, user)
 
-    # Le jeton CSRF protège la requête POST contre une soumission depuis un site tiers.
-    validate_csrf_token(request, csrf_token)
-
-    # L'ID de l'enregistrement provient de l'URL et ne constitue jamais une preuve de propriété
-    exp = load_owned_record(session, Experience, exp_id, user)
-    
-    if not exp:
-        return RedirectResponse("/profil", status_code=303)
-
-    # La saisie d'origine permet de ne pas effacer les champs après une validation refusée.
-    form_values = {
-        "title": title,
-        "date_start": date_start,
-        "date_end": date_end,
-        "description": description,
-        "company": company,
-    }
-
-    # Les mêmes règles qu'à la création maintiennent des données cohérentes après l'édition.
-    try:
-        cleaned_title = clean_text(title, "Title", 150)
-        cleaned_description = clean_text(description, "Description", 3000)
-        cleaned_company = clean_text(company, "Company", 150)
-        parsed_start, parsed_end = parse_date_range(date_start, date_end)
-    except ValueError as exc:
-        # L'objet exp conserve le mode édition pendant que form_values restaure la saisie invalide.
-        return templates.TemplateResponse(
-            request,
-            "experience.html",
-            {
-                "request": request,
-                "exp": exp,
-                "error": str(exc),
-                "form_values": form_values,
-            },
-            status_code=400,
-        )
-
-    # Les valeurs validées remplacent les champs de l'entité déjà suivie par la session.
-    exp.title = cleaned_title
-    exp.date_start = parsed_start
-    exp.date_end = parsed_end
-    exp.description = cleaned_description
-    exp.company = cleaned_company
-
-    # commit persiste toutes les modifications atomiquement dans la base configurée.
+    session.delete(experience)
     session.commit()
 
-    # Le navigateur revient au profil par un GET distinct après la mise à jour.
-    return RedirectResponse("/profil", status_code=303)
+    # 204 interdit tout corps de reponse : le client se contente du statut.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

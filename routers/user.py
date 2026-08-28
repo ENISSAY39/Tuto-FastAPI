@@ -1,15 +1,13 @@
-"""Routes de création de compte et d'affichage des profils privés ou publics."""
+"""Routes JSON de creation de compte, de profil prive et de portfolio public."""
 
-from fastapi import APIRouter, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
 from datetime import date
 
-from core.authentication import get_authenticated_user
-from core.csrf import validate_csrf_token
-from core.database import get_session
+from fastapi import APIRouter, HTTPException, status
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import select
+
+from core.authentication import CurrentUser
+from core.database import SessionDep
 from core.security import hash_password
 from core.validation import (
     clean_text,
@@ -18,141 +16,116 @@ from core.validation import (
     parse_birth_date,
     validate_password,
 )
-
-from schemas.User import User
-from schemas.Experiences import Experience
+from schemas.api import (
+    EducationOut,
+    ExperienceOut,
+    PortfolioDetail,
+    SignupRequest,
+    UserProfile,
+)
 from schemas.Education import Education
+from schemas.Experiences import Experience
+from schemas.User import User
 
-# Ce routeur regroupe les opérations centrées sur un utilisateur et son portfolio.
-router = APIRouter()
-
-# Les pages de compte sont rendues côté serveur depuis le dossier templates/.
-templates = Jinja2Templates(directory="templates")
+# Ce routeur regroupe les operations centrees sur un utilisateur.
+router = APIRouter(prefix="/api", tags=["users"])
 
 
 def calculate_age(birth_date: date) -> int:
-    """Calcule l'âge révolu à la date du jour depuis une date de naissance."""
+    """Calcule l'age revolu a la date du jour depuis une date de naissance."""
 
     today_date = date.today()
     age = today_date.year - birth_date.year
 
-    # L'écart d'années doit être réduit si l'anniversaire n'est pas encore passé cette année.
+    # L'ecart d'annees doit etre reduit si l'anniversaire n'est pas encore
+    # passe cette annee.
     if (today_date.month, today_date.day) < (birth_date.month, birth_date.day):
         age -= 1
     return age
 
 
-@router.get("/portfolio/{user_id}", response_class=HTMLResponse)
-def public_portfolio(
-    request: Request,
-    user_id: int,
-    session: Session = Depends(get_session),
-):
-    """Affiche le portfolio public identifié par son identifiant utilisateur."""
+def build_user_profile(user: User) -> UserProfile:
+    """Serialise un compte vers le profil expose par l'API.
 
-    # La clé primaire de l'URL permet un accès direct sans authentification.
-    user = session.get(User, user_id)
+    Passer par ce constructeur unique garantit qu'aucune reponse ne peut
+    inclure ``hashed_password`` par distraction : le modele de sortie ne
+    declare tout simplement pas ce champ.
+    """
 
-    # Un identifiant inconnu ne doit pas être transmis au template de profil.
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-
-    # Les expériences affichées appartiennent exclusivement au compte demandé.
-    experiences = session.exec(
-        select(Experience).where(Experience.user_id == user.id)
-    ).all()
-
-    # Les formations sont chargées séparément avec le même filtre de propriétaire.
-    educations = session.exec(
-        select(Education).where(Education.user_id == user.id)
-    ).all()
-
-    # Le template public reçoit l'utilisateur et les deux collections de son portfolio.
-    return templates.TemplateResponse(
-        request,
-        "public_profile.html",
-        {
-            "request": request,
-            "user": user,
-            "experiences": experiences,
-            "educations": educations,
-        },
+    return UserProfile(
+        id=user.id,
+        name=user.name,
+        first_name=user.first_name,
+        mail=user.mail,
+        phone=user.phone,
+        birth_date=user.birth_date,
+        age=calculate_age(user.birth_date),
     )
 
 
-@router.get("/create_user", response_class=HTMLResponse)
-def show_form(request: Request):
-    """Affiche un formulaire d'inscription vide."""
+def serialize_experience(experience: Experience) -> ExperienceOut:
+    """Convertit une experience stockee vers sa representation JSON.
 
-    # form_data permet au même template d'afficher un formulaire vide ou de restaurer une saisie.
-    return templates.TemplateResponse(
-        request,
-        "create_user.html",
-        {"request": request, "form_data": {}},
+    Les colonnes sont des ``datetime`` toujours fixes a minuit ; la reponse
+    expose une date simple pour que le client n'ait aucune conversion de fuseau
+    horaire a faire avant de remplir un ``<input type="date">``.
+    """
+
+    return ExperienceOut(
+        id=experience.id,
+        title=experience.title,
+        company=experience.company,
+        description=experience.description,
+        date_start=experience.date_start.date(),
+        date_end=experience.date_end.date(),
     )
 
 
-@router.post("/create_user")
-def create_user(
-    request: Request,
-    csrf_token: str = Form(""),
-    name: str = Form(...),
-    first_name: str = Form(...),
-    birth_date: str = Form(...),
-    mail: str = Form(...),
-    phone: str = Form(...),
-    password: str = Form(...),
-    session: Session = Depends(get_session),
-):
-    """Valide une inscription, crée le compte et redirige vers la connexion."""
+def serialize_education(education: Education) -> EducationOut:
+    """Convertit une formation stockee vers sa representation JSON."""
 
-    # Le jeton lié au navigateur est vérifié avant de traiter les données du formulaire.
-    validate_csrf_token(request, csrf_token)
+    return EducationOut(
+        id=education.id,
+        school_name=education.school_name,
+        major=education.major,
+        description=education.description,
+        date_start=education.date_start.date(),
+        date_end=education.date_end.date(),
+    )
 
-    # Les champs non sensibles sont conservés pour réafficher la saisie après une erreur.
-    # Le mot de passe est volontairement exclu afin de ne jamais le renvoyer au template.
-    form_data = {
-        "name": name,
-        "first_name": first_name,
-        "birth_date": birth_date,
-        "mail": mail,
-        "phone": phone,
-    }
 
-    # Chaque valeur est nettoyée et validée avant la construction de l'objet SQLModel.
+@router.post("/signup", response_model=UserProfile, status_code=status.HTTP_201_CREATED)
+def signup(payload: SignupRequest, session: SessionDep):
+    """Valide une inscription et cree le compte correspondant."""
+
+    # Chaque valeur est nettoyee et validee avant la construction du modele.
     try:
-        cleaned_name = clean_text(name, "Name", 100)
-        cleaned_first_name = clean_text(first_name, "First name", 100)
-        birth_date_obj = parse_birth_date(birth_date)
-        normalized_mail = normalize_email(mail)
-        normalized_phone = normalize_phone(phone)
-        validated_password = validate_password(password)
+        cleaned_name = clean_text(payload.name, "Name", 100)
+        cleaned_first_name = clean_text(payload.first_name, "First name", 100)
+        birth_date_obj = parse_birth_date(payload.birth_date)
+        normalized_mail = normalize_email(payload.mail)
+        normalized_phone = normalize_phone(payload.phone)
+        validated_password = validate_password(payload.password)
     except ValueError as exc:
-        # Les erreurs attendues de validation sont présentées avec un statut client 400.
-        return templates.TemplateResponse(
-            request,
-            "create_user.html",
-            {"request": request, "error": str(exc), "form_data": form_data},
-            status_code=400,
-        )
+        # Les erreurs attendues de validation portent un message lisible que
+        # l'interface affiche tel quel sous le formulaire.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
-    # Ce contrôle fournit une erreur lisible avant de tenter l'insertion en base.
+    # Ce controle fournit une erreur lisible avant de tenter l'insertion.
     existing_user = session.exec(
         select(User).where(User.mail == normalized_mail)
     ).first()
     if existing_user:
-        return templates.TemplateResponse(
-            request,
-            "create_user.html",
-            {
-                "request": request,
-                "error": "An account already exists with this email address.",
-                "form_data": form_data,
-            },
-            status_code=409,
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account already exists with this email address.",
         )
 
-    # Seul le condensat du mot de passe validé est enregistré ; le mot de passe brut est écarté.
+    # Seul le condensat du mot de passe valide est enregistre ; le mot de passe
+    # brut est ecarte.
     user = User(
         name=cleaned_name,
         first_name=cleaned_first_name,
@@ -162,71 +135,75 @@ def create_user(
         hashed_password=hash_password(validated_password),
     )
 
-    # L'ajout reste en attente dans la session jusqu'à la transaction commitée ci-dessous.
     session.add(user)
     try:
         session.commit()
-    except IntegrityError:
-        # La contrainte unique protège aussi contre deux inscriptions concurrentes.
-        # Un rollback est obligatoire avant de pouvoir réutiliser cette session SQLAlchemy.
+    except IntegrityError as exc:
+        # La contrainte unique protege aussi contre deux inscriptions
+        # concurrentes. Le rollback est obligatoire avant de pouvoir reutiliser
+        # cette session SQLAlchemy.
         session.rollback()
-        return templates.TemplateResponse(
-            request,
-            "create_user.html",
-            {
-                "request": request,
-                "error": "An account already exists with this email address.",
-                "form_data": form_data,
-            },
-            status_code=409,
-        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account already exists with this email address.",
+        ) from exc
 
-    # Post/Redirect/Get évite de recréer le compte si la page est actualisée.
-    return RedirectResponse("/login", status_code=303)
+    session.refresh(user)
+    return build_user_profile(user)
 
 
-@router.get("/profil", response_class=HTMLResponse)
-def show_profile(
-    request: Request,
-    session: Session = Depends(get_session),
-):
-    """Affiche le tableau de bord privé du compte authentifié."""
+@router.get("/me", response_model=PortfolioDetail)
+def read_own_portfolio(user: CurrentUser, session: SessionDep):
+    """Renvoie le portfolio complet du compte authentifie."""
 
-    # Le cookie JWT est décodé puis son sujet est résolu en utilisateur par le helper partagé.
-    user = get_authenticated_user(request, session)
-    if not user:
-        # Un cookie absent, invalide, expiré ou associé à aucun compte ramène à la connexion.
-        return RedirectResponse("/login", status_code=303)
-
-    # L'identifiant issu du compte authentifié borne la lecture à ses propres expériences.
+    # L'identifiant provient du jeton verifie, jamais d'un parametre client :
+    # un visiteur ne peut donc pas demander le tableau de bord d'un autre.
     experiences = session.exec(
-        select(Experience).where(Experience.user_id == user.id)
+        select(Experience)
+        .where(Experience.user_id == user.id)
+        .order_by(Experience.date_start.desc())
     ).all()
 
-    # Les formations sont filtrées avec la même règle de propriété.
     educations = session.exec(
-        select(Education).where(Education.user_id == user.id)
+        select(Education)
+        .where(Education.user_id == user.id)
+        .order_by(Education.date_start.desc())
     ).all()
 
-    # Le template privé reçoit uniquement les informations du compte résolu par le JWT.
-    response = templates.TemplateResponse(
-        request,
-        "profil.html",
-        {
-            "request": request,
-            "name": user.name,
-            "first_name": user.first_name,
-            "age": calculate_age(user.birth_date),
-            "mail": user.mail,
-            "phone": user.phone,
-            "experiences": experiences,
-            "educations": educations,
-        },
+    return PortfolioDetail(
+        user=build_user_profile(user),
+        experiences=[serialize_experience(item) for item in experiences],
+        educations=[serialize_education(item) for item in educations],
     )
 
-    # Le profil privé ne doit pas rester visible via l'historique après une déconnexion.
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
 
-    return response
+@router.get("/portfolios/{user_id}", response_model=PortfolioDetail)
+def read_public_portfolio(user_id: int, session: SessionDep):
+    """Renvoie le portfolio public identifie par son identifiant utilisateur."""
+
+    # La cle primaire de l'URL permet un acces direct sans authentification.
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This portfolio does not exist.",
+        )
+
+    # Les deux collections sont filtrees sur le proprietaire demande.
+    experiences = session.exec(
+        select(Experience)
+        .where(Experience.user_id == user.id)
+        .order_by(Experience.date_start.desc())
+    ).all()
+
+    educations = session.exec(
+        select(Education)
+        .where(Education.user_id == user.id)
+        .order_by(Education.date_start.desc())
+    ).all()
+
+    return PortfolioDetail(
+        user=build_user_profile(user),
+        experiences=[serialize_experience(item) for item in experiences],
+        educations=[serialize_education(item) for item in educations],
+    )

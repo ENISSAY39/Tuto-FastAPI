@@ -1,21 +1,29 @@
 """Create and configure the FastAPI e-portfolio application.
 
-This module is deliberately limited to application wiring: database migrations
-and optional demo data run during startup, middleware prepares CSRF protection,
-and each domain router is registered on the shared application instance.
+This module is deliberately limited to application wiring: the database schema
+and optional demo data are prepared during startup, error responses are given
+one uniform JSON shape, the JSON routers are registered, and the compiled
+frontend is served when it has been built.
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from core.config import settings
-from core.csrf import get_or_create_csrf_token, set_csrf_cookie
 from core.database import SessionDep, create_db_and_tables
-from routers import auth, user, experience, education
+from routers import auth, education, experience, user
 from seed import seed
+
+# The Vite build writes its pages and hashed assets here. Resolving the path
+# from this file keeps it correct even when the process is started from another
+# working directory.
+FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -39,44 +47,61 @@ async def lifespan(app: FastAPI):
 
 # Passing the lifespan explicitly makes startup preparation part of FastAPI's
 # supported lifecycle rather than relying on deprecated startup events.
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(title="e-portfolio", lifespan=lifespan)
 
 
-@app.middleware("http")
-async def csrf_cookie_middleware(request: Request, call_next):
-    """Make one CSRF token available to templates and the browser cookie jar.
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Return raised HTTP errors as ``{"error": "..."}``.
 
-    Mutating routes compare their submitted form token with this HTTP-only
-    cookie. The middleware reuses a plausible existing token to avoid changing
-    it between displaying a form and submitting that same form.
+    The browser client reads that single key for every failure, so overriding
+    FastAPI's default ``{"detail": ...}`` envelope here means no handler has to
+    build error responses by hand.
     """
-    csrf_token = get_or_create_csrf_token(request)
-    # Templates read the token through ``request.state.csrf_token`` and place it
-    # in a hidden form field; JavaScript does not need access to the cookie.
-    request.state.csrf_token = csrf_token
-    response = await call_next(request)
-
-    # Only emit Set-Cookie when the client has no token (or sent an invalid one)
-    # so normal requests do not unnecessarily refresh the cookie lifetime.
-    if request.cookies.get("csrf_token") != csrf_token:
-        set_csrf_cookie(response, csrf_token)
-    return response
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )
 
 
-# Expose stylesheets and other public assets under a stable URL prefix.
-app.mount("/static", StaticFiles(directory="static"), name="static")
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Report a malformed request body in the same error envelope.
+
+    Field-level rules live in ``core.validation`` and already produce readable
+    messages; reaching this handler means the payload was structurally wrong
+    (a missing key, or a value of the wrong JSON type), which the interface
+    only has to report generically.
+    """
+    return JSONResponse(
+        status_code=422,
+        content={"error": "The submitted data is invalid or incomplete."},
+    )
+
 
 # Le healthcheck sert aux sondes externes (Docker, supervision) : il ne se
-# contente pas de répondre, il vérifie que la base répond elle aussi.
-@app.get("/health")
+# contente pas de repondre, il verifie que la base repond elle aussi.
+@app.get("/api/health")
 def health_check(session: SessionDep):
-    """Signale que l'application et sa base de données répondent."""
+    """Signale que l'application et sa base de donnees repondent."""
     session.execute(text("SELECT 1"))
     return {"status": "ok", "database": "ok"}
 
 
-# Register the public/authentication, profile, experience, and education routes.
+# Register the discovery/authentication, profile, experience, and education
+# routes. Every one of them lives under /api.
 app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(experience.router)
 app.include_router(education.router)
+
+
+# The compiled frontend is mounted last so that none of the API routes above
+# can be shadowed by a static file. In development the directory does not
+# exist: the Vite dev server serves the pages and proxies /api here, so the
+# mount is simply skipped.
+if FRONTEND_DIST.is_dir():
+    # ``html=True`` resolves a bare directory request to index.html, which is
+    # what makes "/" load the landing page of this multi-page frontend.
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

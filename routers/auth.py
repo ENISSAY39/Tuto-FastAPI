@@ -1,223 +1,130 @@
-"""Routes publiques de découverte, de recherche et d'authentification."""
+"""Routes JSON de decouverte publique et d'authentification."""
 
-from fastapi import APIRouter, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from sqlmodel import Session, select
+from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import func
+from sqlmodel import select
 
-from core.config import settings
-from core.csrf import CSRF_COOKIE_NAME, validate_csrf_token
-from core.database import get_session
-from core.security import verify_password, create_access_token
+from core.database import SessionDep
+from core.security import create_access_token, verify_password
 from core.validation import normalize_email
+from routers.user import build_user_profile
+from schemas.api import (
+    AuthenticatedUser,
+    LoginRequest,
+    PortfolioPage,
+    UserSummary,
+)
 from schemas.User import User
 
-# Ce routeur est enregistré dans l'application principale sans préfixe d'URL.
-router = APIRouter()
+# Toutes les routes de l'application vivent sous /api : le reste des URL est
+# servi par le frontend compile, qui doit pouvoir recevoir n'importe quel
+# chemin sans entrer en conflit avec une route de l'API.
+router = APIRouter(prefix="/api", tags=["auth"])
 
-# Les réponses HTML de ce module sont rendues depuis le dossier partagé templates/.
-templates = Jinja2Templates(directory="templates")
-
-
-@router.get("/", response_class=HTMLResponse)
-def home(
-    request: Request,
-    page: int = 1,
-    session: Session = Depends(get_session),
-):
-    """Affiche la liste publique des portfolios avec une pagination de dix comptes."""
-
-    # Une taille fixe garantit que les liens précédent/suivant restent cohérents.
-    items_per_page = 10
-
-    # Les numéros négatifs ou nuls sont ramenés à la première page.
-    if page < 1:
-        page = 1
-
-    # Le total sert à calculer la dernière page accessible avant de lire la tranche.
-    total_users = len(session.exec(select(User)).all())
-    total_pages = (total_users + items_per_page - 1) // items_per_page
-
-    # Une page trop grande est ramenée à la dernière page lorsqu'il existe des comptes.
-    if page > total_pages and total_pages > 0:
-        page = total_pages
-
-    # SQL OFFSET est indexé à partir de zéro, contrairement au numéro visible par l'utilisateur.
-    offset = (page - 1) * items_per_page
-
-    # La session injectée est limitée à la requête HTTP et fournit uniquement la tranche courante.
-    users = session.exec(select(User).offset(offset).limit(items_per_page)).all()
-
-    # Le template reçoit les données et les indicateurs nécessaires à ses liens de pagination.
-    return templates.TemplateResponse(
-        request,
-        "home.html",
-        {
-            "request": request,
-            "users": users,
-            "current_page": page,
-            "total_pages": total_pages,
-            "has_previous": page > 1,
-            "has_next": page < total_pages,
-            "previous_page": page - 1,
-            "next_page": page + 1,
-        },
-    )
+# Une taille de page fixe garde les liens precedent/suivant coherents entre
+# deux requetes successives.
+PORTFOLIOS_PER_PAGE = 10
 
 
-@router.get("/search", response_class=HTMLResponse)
-def search_users(
-    request: Request,
+@router.get("/portfolios", response_model=PortfolioPage)
+def list_portfolios(
+    session: SessionDep,
     query: str = "",
     page: int = 1,
-    session: Session = Depends(get_session),
 ):
-    """Recherche les portfolios par nom et affiche les résultats paginés."""
+    """Liste les portfolios publics, filtres par nom et pagines par dix.
 
-    # La recherche utilise la même taille de page que la page d'accueil.
-    items_per_page = 10
+    Une recherche vide se comporte comme l'ancienne page d'accueil : le filtre
+    ``contains("")`` accepte toutes les lignes, ce qui evite de maintenir deux
+    routes presque identiques.
+    """
 
-    # Les numéros négatifs ou nuls sont ramenés à la première page.
+    # Les numeros negatifs ou nuls sont ramenes a la premiere page.
     if page < 1:
         page = 1
 
-    # La même condition de recherche est utilisée pour compter puis charger les résultats.
-    total_users = len(session.exec(select(User).where(User.name.contains(query))).all())
+    # La meme condition sert au comptage puis au chargement de la tranche.
+    search_condition = User.name.contains(query)
 
-    # Une recherche sans résultat conserve une page logique afin que le template reste navigable.
-    total_pages = (
-        (total_users + items_per_page - 1) // items_per_page if total_users > 0 else 1
+    # COUNT laisse le total au moteur SQL au lieu de charger toutes les lignes
+    # en memoire uniquement pour les compter.
+    total_portfolios = session.exec(
+        select(func.count()).select_from(User).where(search_condition)
+    ).one()
+
+    # Une recherche sans resultat conserve une page logique pour que le pager
+    # affiche "Page 1 of 1" plutot qu'une division par zero.
+    total_pages = max(
+        1,
+        (total_portfolios + PORTFOLIOS_PER_PAGE - 1) // PORTFOLIOS_PER_PAGE,
     )
 
-    # Une page située après les résultats est ramenée à la dernière page valide.
-    if page > total_pages and total_pages > 0:
+    # Une page situee au dela des resultats est ramenee a la derniere valide.
+    if page > total_pages:
         page = total_pages
 
-    # Le décalage SQL correspond au nombre de résultats des pages précédentes.
-    offset = (page - 1) * items_per_page
+    # OFFSET est indexe a partir de zero, contrairement au numero affiche.
+    offset = (page - 1) * PORTFOLIOS_PER_PAGE
 
-    # Seule la tranche demandée est transmise au template de la page d'accueil.
-    users = session.exec(
+    portfolios = session.exec(
         select(User)
-        .where(User.name.contains(query))
+        .where(search_condition)
+        .order_by(User.id)
         .offset(offset)
-        .limit(items_per_page)
+        .limit(PORTFOLIOS_PER_PAGE)
     ).all()
 
-    # La requête de recherche est conservée pour l'affichage et les liens de pagination.
-    return templates.TemplateResponse(
-        request,
-        "home.html",
-        {
-            "request": request,
-            "users": users,
-            "query": query,
-            "current_page": page,
-            "total_pages": total_pages,
-            "has_previous": page > 1,
-            "has_next": page < total_pages,
-            "previous_page": page - 1,
-            "next_page": page + 1,
-        },
+    return PortfolioPage(
+        # UserSummary ne publie que l'identite : ni contact ni condensat de mot
+        # de passe ne transitent par la liste publique.
+        portfolios=[
+            UserSummary(id=user.id, name=user.name, first_name=user.first_name)
+            for user in portfolios
+        ],
+        query=query,
+        current_page=page,
+        total_pages=total_pages,
+        total_portfolios=total_portfolios,
+        has_previous=page > 1,
+        has_next=page < total_pages,
     )
 
 
-@router.get("/login", response_class=HTMLResponse)
-def login_page_alias(request: Request):
-    """Affiche le formulaire de connexion pour les visiteurs non authentifiés."""
+@router.post("/login", response_model=AuthenticatedUser)
+def login(payload: LoginRequest, session: SessionDep):
+    """Authentifie un compte et renvoie son jeton d'acces signe."""
 
-    return templates.TemplateResponse(
-        request,
-        "login.html",
-        {"request": request},
-    )
-
-
-@router.post("/login")
-def login_user(
-    request: Request,
-    csrf_token: str = Form(""),
-    mail: str = Form(...),
-    password: str = Form(...),
-    session: Session = Depends(get_session),
-):
-    """Authentifie un compte et place son JWT dans un cookie HTTP-only."""
-
-    # Toute mutation issue d'un formulaire doit provenir d'une page ayant reçu le jeton CSRF.
-    validate_csrf_token(request, csrf_token)
-
-    # La normalisation rend la recherche insensible aux espaces et à la casse usuels.
+    # La normalisation rend la recherche insensible aux espaces et a la casse.
     try:
-        normalized_mail = normalize_email(mail)
+        normalized_mail = normalize_email(payload.mail)
     except ValueError:
-        # Une valeur mal formée suit quand même le chemin d'échec générique de connexion.
-        normalized_mail = mail.strip().lower()
+        # Une adresse mal formee suit quand meme le chemin d'echec generique :
+        # repondre differemment revelerait quelles adresses sont valides.
+        normalized_mail = payload.mail.strip().lower()
 
-    # Le compte est recherché par son adresse normalisée dans la session de cette requête.
     user = session.exec(select(User).where(User.mail == normalized_mail)).first()
 
-    # Un message unique évite de révéler si l'adresse existe dans la base.
-    if not user or not verify_password(password, user.hashed_password):
-        return templates.TemplateResponse(
-            request,
-            "login.html",
-            {
-                "request": request,
-                "error": "Invalid email or password.",
-                "mail": normalized_mail,
-            },
-            status_code=401,
+    # Un message unique evite de reveler si l'adresse existe en base.
+    if not user or not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
         )
 
-    # L'adresse stockée devient le sujet du JWT et permettra de recharger le compte ensuite.
+    # L'adresse stockee devient le sujet du JWT et permettra de recharger le
+    # compte a chaque requete protegee.
     token = create_access_token(data={"sub": user.mail})
 
-    # Le code 303 applique Post/Redirect/Get et empêche la resoumission du mot de passe.
-    response = RedirectResponse(
-        url="/profil",
-        status_code=303,
-    )
-
-    # Le navigateur peut envoyer le JWT, mais JavaScript ne peut pas lire ce cookie HTTP-only.
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        max_age=settings.access_token_expire_minutes * 60,
-        httponly=True,
-        samesite="lax",
-        secure=settings.cookie_secure_enabled,
-        path="/",
-    )
-
-    return response
+    return AuthenticatedUser(token=token, user=build_user_profile(user))
 
 
-# Logout
 @router.post("/logout")
-def logout(request: Request, csrf_token: str = Form("")):
-    """Déconnecte le navigateur en supprimant ses cookies d'accès et de protection CSRF."""
+def logout():
+    """Accuse reception d'une deconnexion.
 
-    # La déconnexion est une mutation protégée afin qu'un site tiers ne puisse pas la déclencher.
-    validate_csrf_token(request, csrf_token)
+    Le serveur ne conserve aucun etat de session : c'est le client qui efface
+    son jeton. La route existe pour que l'interface dispose d'un point d'appel
+    unique si une revocation cote serveur est ajoutee plus tard.
+    """
 
-    # La redirection 303 renvoie le navigateur vers l'accueil après le POST.
-    response = RedirectResponse("/", status_code=303)
-
-    # Les attributs doivent correspondre à ceux du cookie original pour garantir sa suppression.
-    response.delete_cookie(
-        key="access_token",
-        path="/",
-        secure=settings.cookie_secure_enabled,
-        httponly=True,
-        samesite="lax",
-    )
-
-    # Un nouveau cycle de navigation générera un nouveau jeton CSRF après la déconnexion.
-    response.delete_cookie(
-        key=CSRF_COOKIE_NAME,
-        path="/",
-        secure=settings.cookie_secure_enabled,
-        httponly=True,
-        samesite="lax",
-    )
-    return response
+    return {"status": "logged out"}
