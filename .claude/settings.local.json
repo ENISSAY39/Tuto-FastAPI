@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//d/llms/**)",
+      "Read(//d/llms/blobs/**)",
+      "PowerShell(\"OLLAMA_MODELS = $env:OLLAMA_MODELS\"; \"OLLAMA_HOST = $env:OLLAMA_HOST\"; \"OLLAMA_API_BASE = $env:OLLAMA_API_BASE\"; \"--- user-level ---\"; [Environment]::GetEnvironmentVariable\\('OLLAMA_MODELS','User'\\); \"--- machine-level ---\"; [Environment]::GetEnvironmentVariable\\('OLLAMA_MODELS','Machine'\\); \"--- aider ---\"; \\(Get-Command aider -ErrorAction SilentlyContinue\\).Source)",
+      "PowerShell(try { $r = Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 5 -ErrorAction Stop; \"OLLAMA UP\"; $r.models | Select-Object name, size | Format-Table -AutoSize | Out-String } catch { \"OLLAMA DOWN: $\\($_.Exception.Message\\)\" })",
+      "PowerShell(aider *)",
+      "PowerShell(ollama list *)",
+      "Read(//c/Users/DELL_G15_5330/**)",
+      "Read(//c/Users/DELL_G15_5330/.ollama/**)",
+      "Bash(ollama list *)",
+      "Bash(ollama ps *)",
+      "Bash(ollama show *)",
+      "Bash(bash \"C:/Users/DELL_G~1/AppData/Local/Temp/claude/D--Ubuntu-4A-S8-Web-prog-e-portfolio/d7ca3bd6-a814-4c9d-b0d3-e316c8ac5180/scratchpad/bench.sh\")",
+      "Bash(pip show *)",
+      "Bash(where aider *)",
+      "Bash(uv tool *)",
+      "Bash(grep -nE \"^#{1,3} \" README.md)"
+    ]
+  }
+}

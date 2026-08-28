@@ -13,7 +13,7 @@ from sqlalchemy import text
 
 from core.config import settings
 from core.csrf import get_or_create_csrf_token, set_csrf_cookie
-from core.database import SessionDep, run_database_migrations
+from core.database import SessionDep, create_db_and_tables
 from routers import auth, user, experience, education
 from seed import seed
 
@@ -22,13 +22,14 @@ from seed import seed
 async def lifespan(app: FastAPI):
     """Prepare persistent application state before accepting HTTP requests.
 
-    Alembic must finish first so route handlers never execute against an older
-    schema. Demo data is then synchronized only when the active environment has
-    explicitly enabled it (or when development defaults apply).
+    The schema is created first so route handlers never execute against a
+    database with missing tables. Demo data is then synchronized only when the
+    active environment has explicitly enabled it (or when development defaults
+    apply).
     """
-    # Apply committed migrations instead of relying on ``create_all()``, which
-    # cannot safely evolve tables that already contain user data.
-    run_database_migrations()
+    # ``create_all`` is a no-op for tables that already exist, which keeps
+    # repeated startups safe on an already populated database.
+    create_db_and_tables()
     if settings.seed_demo_data_enabled:
         seed()
 

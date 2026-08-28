@@ -2,7 +2,7 @@
 branch = True
 source = .
 omit =
-    migrations/*
+    frontend/*
     tests/*
 
 [report]
