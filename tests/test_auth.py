@@ -1,11 +1,10 @@
-"""Integration tests for registration and cookie-based authentication routes."""
+"""Integration tests for registration and Bearer-token authentication."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
 from fastapi.testclient import TestClient
-from httpx import Response
 from sqlmodel import Session, select
 
 from core.security import verify_password
@@ -23,21 +22,19 @@ REGISTRATION_DATA = {
 }
 
 
-def test_registration_normalizes_and_hashes_account_data(
+def test_signup_normalizes_and_hashes_account_data(
     client: TestClient,
     session: Session,
-    csrf_token: Callable[[str], str],
 ) -> None:
-    form_data = {**REGISTRATION_DATA, "csrf_token": csrf_token("/create_user")}
+    response = client.post("/api/signup", json=REGISTRATION_DATA)
 
-    response = client.post(
-        "/create_user",
-        data=form_data,
-        follow_redirects=False,
-    )
-
-    assert response.status_code == 303
-    assert response.headers["location"] == "/login"
+    assert response.status_code == 201
+    body = response.json()
+    assert body["mail"] == "ada.lovelace@example.com"
+    assert body["name"] == "Lovelace"
+    # No response model exposes the stored credential, in any shape.
+    assert "hashed_password" not in body
+    assert "password" not in body
 
     user = session.exec(
         select(User).where(User.mail == "ada.lovelace@example.com")
@@ -46,78 +43,125 @@ def test_registration_normalizes_and_hashes_account_data(
     assert verify_password(VALID_PASSWORD, user.hashed_password) is True
 
 
-def test_registration_returns_validation_errors_without_creating_an_account(
+def test_signup_reports_validation_errors_without_creating_an_account(
     client: TestClient,
     session: Session,
-    csrf_token: Callable[[str], str],
 ) -> None:
-    form_data = {
-        **REGISTRATION_DATA,
-        "password": "too-short",
-        "csrf_token": csrf_token("/create_user"),
-    }
-
-    response = client.post("/create_user", data=form_data)
+    response = client.post(
+        "/api/signup",
+        json={**REGISTRATION_DATA, "password": "too-short"},
+    )
 
     assert response.status_code == 400
+    # The message is the one core.validation raised, so the interface can show
+    # it to the visitor unchanged.
+    assert "at least 10 characters" in response.json()["error"]
     assert session.exec(select(User)).all() == []
 
 
-def test_login_normalizes_email_and_sets_a_protected_access_cookie(
+def test_signup_rejects_an_email_that_is_already_registered(
+    client: TestClient,
+    session: Session,
+    user_factory: Callable[..., User],
+) -> None:
+    user_factory(mail="ada.lovelace@example.com")
+
+    response = client.post("/api/signup", json=REGISTRATION_DATA)
+
+    assert response.status_code == 409
+    assert len(session.exec(select(User)).all()) == 1
+
+
+def test_login_normalizes_the_email_and_returns_a_usable_token(
     client: TestClient,
     user_factory: Callable[..., User],
-    login_user: Callable[..., Response],
+    bearer: Callable[[str], dict[str, str]],
 ) -> None:
     user_factory(mail="ada@example.com")
 
-    response = login_user("  ADA@EXAMPLE.COM  ", VALID_PASSWORD)
+    response = client.post(
+        "/api/login",
+        json={"mail": "  ADA@EXAMPLE.COM  ", "password": VALID_PASSWORD},
+    )
 
-    assert response.status_code == 303
-    assert response.headers["location"] == "/profil"
-    assert client.cookies.get("access_token") is not None
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user"]["mail"] == "ada@example.com"
+    assert "hashed_password" not in body["user"]
 
-    profile_response = client.get("/profil")
+    # The token is only proven good by the protected route accepting it.
+    profile_response = client.get("/api/me", headers=bearer(body["token"]))
     assert profile_response.status_code == 200
-    assert "ada@example.com" in profile_response.text
+    assert profile_response.json()["user"]["mail"] == "ada@example.com"
 
 
 def test_login_returns_a_generic_error_for_invalid_credentials(
     client: TestClient,
     user_factory: Callable[..., User],
-    login_user: Callable[..., Response],
 ) -> None:
     user_factory(mail="ada@example.com")
 
-    response = login_user("ada@example.com", "WrongPassword9")
-
-    assert response.status_code == 401
-    assert "Invalid email or password." in response.text
-    assert client.cookies.get("access_token") is None
-
-
-def test_logout_deletes_authentication_and_csrf_cookies(
-    authenticated_client: TestClient,
-    csrf_token: Callable[[str], str],
-) -> None:
-    token = csrf_token("/profil")
-
-    response = authenticated_client.post(
-        "/logout",
-        data={"csrf_token": token},
-        follow_redirects=False,
+    response = client.post(
+        "/api/login",
+        json={"mail": "ada@example.com", "password": "WrongPassword9"},
     )
 
-    assert response.status_code == 303
-    assert response.headers["location"] == "/"
-    assert authenticated_client.cookies.get("access_token") is None
-
-    private_response = authenticated_client.get("/profil", follow_redirects=False)
-    assert private_response.status_code == 303
-    assert private_response.headers["location"] == "/login"
+    assert response.status_code == 401
+    # The same wording answers an unknown address, so nothing here reveals
+    # which accounts exist.
+    assert response.json()["error"] == "Invalid email or password."
 
 
-def test_profile_redirects_when_not_authenticated(client: TestClient) -> None:
-    response = client.get("/profil", follow_redirects=False)
+def test_login_rejects_an_unknown_address_the_same_way(client: TestClient) -> None:
+    response = client.post(
+        "/api/login",
+        json={"mail": "nobody@example.com", "password": VALID_PASSWORD},
+    )
 
-    assert response.status_code == 303
-    assert response.headers["location"] == "/login"
+    assert response.status_code == 401
+    assert response.json()["error"] == "Invalid email or password."
+
+
+def test_logout_acknowledges_without_needing_server_state(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post("/api/logout")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "logged out"}
+
+
+def test_profile_rejects_an_anonymous_request(client: TestClient) -> None:
+    response = client.get("/api/me")
+
+    assert response.status_code == 401
+    assert "error" in response.json()
+
+
+def test_profile_rejects_a_token_that_is_not_a_valid_signature(
+    client: TestClient,
+    bearer: Callable[[str], dict[str, str]],
+) -> None:
+    response = client.get("/api/me", headers=bearer("not-a-real-token"))
+
+    assert response.status_code == 401
+
+
+def test_profile_rejects_a_token_whose_account_no_longer_exists(
+    client: TestClient,
+    session: Session,
+    user_factory: Callable[..., User],
+    access_token: Callable[..., str],
+    bearer: Callable[[str], dict[str, str]],
+) -> None:
+    user = user_factory(mail="ada@example.com")
+    token = access_token(user.mail)
+
+    session.delete(user)
+    session.commit()
+
+    # A signature that still verifies is not enough: the subject must still
+    # resolve to a stored account.
+    response = client.get("/api/me", headers=bearer(token))
+
+    assert response.status_code == 401
